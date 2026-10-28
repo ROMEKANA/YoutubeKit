@@ -198,56 +198,12 @@ small {
 .main {
   max-width: 1040px;
   margin: auto;
-  padding: 52px 30px 145px;
-}
-.intro {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 31px;
-}
-.intro h1 {
-  font-size: 31px;
-  letter-spacing: -1px;
-  line-height: 1.7;
-  font-weight: 700;
+  padding: 28px 30px 145px;
 }
 .intro-description {
   font-size: 12px;
   color: var(--muted);
   margin-top: 10px;
-}
-.mobile-break {
-  display: none;
-}
-.intro-mark {
-  width: 116px;
-  height: 100px;
-  position: relative;
-  display: grid;
-  place-items: center;
-  color: #789174;
-  transform: rotate(-8deg);
-  margin-right: 18px;
-}
-.intro-mark span {
-  position: absolute;
-  width: 78px;
-  height: 62px;
-  border: 1px solid #c6cebb;
-  border-radius: 12px;
-  background: #eff0e6;
-  transform: translate(0, 0);
-}
-.intro-mark span:nth-child(1) {
-  transform: translate(12px, -12px);
-}
-.intro-mark span:nth-child(2) {
-  transform: translate(6px, -6px);
-  background: #e9eddf;
-}
-.intro-mark svg {
-  z-index: 1;
 }
 .demo-banner {
   display: flex;
@@ -289,7 +245,7 @@ small {
   font-size: 9px;
   margin-bottom: 7px;
 }
-.section-heading h2 {
+.section-heading :is(h1, h2) {
   font-size: 18px;
   font-weight: 700;
   line-height: 1.5;
@@ -309,21 +265,16 @@ small {
   margin-bottom: 14px;
 }
 .video-list {
-  --thumb-width: 96px;
+  --list-scale: 1;
+  --thumb-width: clamp(44px, calc(96px * var(--list-scale)), 40vw);
   border-top: 1px solid var(--line);
-}
-.density-compact {
-  --thumb-width: 80px;
-}
-.density-large {
-  --thumb-width: 120px;
 }
 .video-row {
   display: grid;
-  grid-template-columns: var(--thumb-width) minmax(0, 1fr) 38px;
-  gap: 15px;
+  grid-template-columns: var(--thumb-width) minmax(0, 1fr) 44px;
+  gap: clamp(6px, calc(var(--base-gap, 15px) * var(--list-scale)), 30px);
   align-items: center;
-  padding: 18px 0;
+  padding: clamp(5px, calc(18px * var(--list-scale)), 36px) 0;
   border-bottom: 1px solid var(--line);
 }
 .thumbnail {
@@ -332,6 +283,7 @@ small {
   padding: 0;
   aspect-ratio: 16/9;
   width: 100%;
+  min-height: 44px;
   background: #dedfd3;
   border-radius: 7px;
   overflow: hidden;
@@ -344,7 +296,7 @@ small {
 .thumbnail img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 .duration {
@@ -373,10 +325,14 @@ small {
   text-align: left;
   padding: 0;
   min-width: 0;
-  min-height: 65px;
+  min-height: 44px;
 }
 .video-details h3 {
-  font-size: 13px;
+  font-size: clamp(
+    9px,
+    calc(var(--base-title-size, 13px) * var(--list-scale)),
+    26px
+  );
   font-weight: 600;
   line-height: 1.65;
   display: -webkit-box;
@@ -386,9 +342,15 @@ small {
 }
 .channel-name {
   display: flex;
+  overflow: hidden;
+  white-space: nowrap;
   align-items: center;
   gap: 5px;
-  font-size: 10px;
+  font-size: clamp(
+    9px,
+    calc(var(--base-channel-size, 10px) * var(--list-scale)),
+    20px
+  );
   color: #7f877c;
   margin-top: 6px;
 }
@@ -405,9 +367,9 @@ small {
   flex-shrink: 0;
 }
 .channel-name .avatar {
-  width: 15px;
-  height: 15px;
-  font-size: 8px;
+  width: clamp(12px, calc(15px * var(--list-scale)), 30px);
+  height: clamp(12px, calc(15px * var(--list-scale)), 30px);
+  font-size: clamp(8px, calc(8px * var(--list-scale)), 16px);
 }
 .avatar-blender {
   background: #e9d9c1;
@@ -423,13 +385,13 @@ small {
 }
 .video-date {
   display: block;
-  font-size: 9px;
+  font-size: clamp(9px, calc(9px * var(--list-scale)), 18px);
   color: #969b90;
   margin-top: 4px;
 }
 .add-button {
-  height: 38px;
-  width: 38px;
+  height: 44px;
+  width: 44px;
   display: grid;
   place-items: center;
   border: 1px solid #d9dfd1;
@@ -443,6 +405,11 @@ small {
 .add-button.is-added {
   border-color: #d9e3d4;
   background: #e4ecdf;
+}
+.queue-position {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
 .hidden-label {
   margin-left: 10px;
@@ -1025,13 +992,7 @@ small {
 }
 @media (min-width: 1450px) {
   .main {
-    padding-top: 65px;
-  }
-  .intro {
-    margin-bottom: 38px;
-  }
-  .video-row {
-    padding: 21px 0;
+    padding-top: 32px;
   }
 }
 @media (max-width: 850px) {
@@ -1046,11 +1007,9 @@ small {
   .queue-aside {
     padding: 20px 16px;
   }
-  .video-row {
-    gap: 12px;
-  }
-  .video-details h3 {
-    font-size: 12px;
+  .video-list {
+    --base-gap: 12px;
+    --base-title-size: 12px;
   }
   .prototype-badge {
     display: none;
@@ -1077,47 +1036,13 @@ small {
     width: 39px;
   }
   .main {
-    padding: 32px 19px 140px;
-  }
-  .intro h1 {
-    font-size: 26px;
-    line-height: 1.7;
-    letter-spacing: -0.8px;
-  }
-  .intro .eyebrow {
-    font-size: 8px;
-    letter-spacing: 1.7px;
+    padding: 22px 19px 140px;
   }
   .intro-description {
     font-size: 10px;
     line-height: 1.9;
     margin-top: 9px;
     max-width: 230px;
-  }
-  .intro {
-    margin-bottom: 24px;
-  }
-  .intro-mark {
-    width: 70px;
-    height: 80px;
-    margin-right: 6px;
-  }
-  .intro-mark span {
-    width: 53px;
-    height: 47px;
-    border-radius: 9px;
-  }
-  .intro-mark span:nth-child(1) {
-    transform: translate(8px, -8px);
-  }
-  .intro-mark span:nth-child(2) {
-    transform: translate(4px, -4px);
-  }
-  .intro-mark svg {
-    width: 23px;
-  }
-  .mobile-break {
-    display: block;
   }
   .demo-banner {
     gap: 8px;
@@ -1139,7 +1064,7 @@ small {
   .section-heading {
     margin-bottom: 16px;
   }
-  .section-heading h2 {
+  .section-heading :is(h1, h2) {
     font-size: 15px;
   }
   .section-heading .eyebrow {
@@ -1148,23 +1073,8 @@ small {
   .count-label {
     font-size: 10px;
   }
-  .video-row {
-    gap: 12px;
-    padding: 17px 0;
-    grid-template-columns: var(--thumb-width) minmax(0, 1fr) 32px;
-  }
-  .video-details h3 {
-    font-size: 12px;
-  }
-  .channel-name {
-    font-size: 9px;
-  }
-  .video-date {
-    font-size: 9px;
-  }
-  .add-button {
-    width: 32px;
-    height: 32px;
+  .video-list {
+    --base-channel-size: 9px;
   }
   .add-button svg {
     width: 17px;
@@ -1285,17 +1195,11 @@ small {
   .brand {
     font-size: 19px;
   }
-  .video-row {
-    gap: 8px;
-  }
-  .density-large {
-    --thumb-width: 106px;
+  .video-list {
+    --base-gap: 8px;
   }
   .queue-icon {
     display: none;
-  }
-  .intro-mark {
-    margin-right: 1px;
   }
   .queue-summary {
     gap: 0;

@@ -8,7 +8,7 @@ export interface Video {
 }
 
 export interface Settings {
-  density: "compact" | "standard" | "large";
+  densityPercent: number;
   initialCount: number;
   additionalCount: number;
   excludeShort: boolean;
@@ -23,7 +23,7 @@ export interface SavedState {
 
 export const storageKey = "youtubekit.prototype.v1";
 export const defaultSettings: Settings = {
-  density: "standard",
+  densityPercent: 100,
   initialCount: 30,
   additionalCount: 20,
   excludeShort: true,
@@ -56,13 +56,26 @@ export function restoreState(raw: string | null): SavedState {
         ? input
         : fallback;
     const settings = value.settings ?? {};
+    // 旧3段階の表示設定を近い倍率へ移し、保存済みキューはそのまま引き継ぐ。
+    const legacyDensity =
+      settings.density === "compact"
+        ? 80
+        : settings.density === "large"
+          ? 130
+          : 100;
+    const densityPercent =
+      typeof settings.densityPercent === "number" &&
+      Number.isInteger(settings.densityPercent) &&
+      settings.densityPercent >= 10 &&
+      settings.densityPercent <= 200 &&
+      settings.densityPercent % 10 === 0
+        ? settings.densityPercent
+        : legacyDensity;
     return {
       queue: ids(value.queue),
       hidden: ids(value.hidden),
       settings: {
-        density: ["compact", "standard", "large"].includes(settings.density)
-          ? settings.density
-          : "standard",
+        densityPercent,
         initialCount: number(settings.initialCount, 30, 100),
         additionalCount: number(settings.additionalCount, 20, 100),
         excludeShort:
@@ -80,6 +93,21 @@ export function restoreState(raw: string | null): SavedState {
 // キューの操作は動画ID単位に行い、非表示状態とは独立させる。
 export function addToQueue(queue: string[], id: string): string[] {
   return queue.includes(id) ? queue : [...queue, id];
+}
+
+// 再タップでは対象だけを削除し、残りの並び順を維持する。
+export function toggleQueueItem(queue: string[], id: string): string[] {
+  return queue.includes(id)
+    ? queue.filter((item) => item !== id)
+    : addToQueue(queue, id);
+}
+
+// 設定画面は分単位、動画データと保存済みの閾値は秒単位で比較する。
+export function isExcludedByDuration(
+  durationSeconds: number,
+  settings: Settings,
+): boolean {
+  return settings.excludeShort && durationSeconds <= settings.shortThreshold;
 }
 
 export function moveItem(queue: string[], from: number, to: number): string[] {

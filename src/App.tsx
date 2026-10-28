@@ -1,6 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
-  addToQueue,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { version as appVersion } from "../package.json";
+import {
+  toggleQueueItem,
+  isExcludedByDuration,
   formatDuration,
   moveItem,
   parseVideos,
@@ -55,22 +63,22 @@ function Modal({
   );
 }
 
-// プレーヤーを生成せず、画像のタップをキュー追加の操作として扱う。
+// 画像をタップして選択を切り替え、選択中は現在の再生順を表示する。
 function Thumbnail({
   video,
-  added,
-  onAdd,
+  queuePosition,
+  onToggle,
 }: {
   video: Video;
-  added: boolean;
-  onAdd: () => void;
+  queuePosition: number;
+  onToggle: () => void;
 }) {
   return (
     <button
       className="thumbnail"
-      aria-label={`${video.title}をキューに追加`}
-      aria-disabled={added}
-      onClick={onAdd}
+      aria-label={`${video.title}をキュー${queuePosition ? "から削除" : "に追加"}（サムネイル）`}
+      aria-pressed={queuePosition > 0}
+      onClick={onToggle}
     >
       <img
         src={thumbnail(video.id)}
@@ -81,10 +89,8 @@ function Thumbnail({
         }}
       />
       <span className="duration">{formatDuration(video.durationSeconds)}</span>
-      {added && (
-        <span className="added-mark">
-          <Icon name="check" size={14} /> 追加済み
-        </span>
+      {queuePosition > 0 && (
+        <span className="added-mark">{queuePosition}番目</span>
       )}
     </button>
   );
@@ -145,8 +151,7 @@ export function App() {
     (video) =>
       (channelId === "all" || video.channelId === channelId) &&
       (showHidden || !saved.hidden.includes(video.id)) &&
-      (!settings.excludeShort ||
-        video.durationSeconds > settings.shortThreshold),
+      !isExcludedByDuration(video.durationSeconds, settings),
   );
   const currentChannel =
     channels.find((channel) => channel.id === channelId)?.title ??
@@ -208,14 +213,14 @@ export function App() {
     setLimit(settings.initialCount);
   }, [channelId, showHidden, settings]);
 
-  function add(video: Video) {
+  function toggleQueue(video: Video) {
     setSaved((state) => ({
       ...state,
-      queue: addToQueue(state.queue, video.id),
+      queue: toggleQueueItem(state.queue, video.id),
     }));
     setToast(
       saved.queue.includes(video.id)
-        ? "この動画は追加済みです"
+        ? "キューから削除しました"
         : "キューに追加しました",
     );
   }
@@ -314,24 +319,6 @@ export function App() {
           <Player videos={session} onClose={() => setSession(null)} />
         ) : (
           <>
-            <section className="intro">
-              <div>
-                <p className="eyebrow">YOUR TIME, YOUR CHOICE</p>
-                <h1>
-                  観たいものだけ。
-                  <br className="mobile-break" /> 観たい分だけ。
-                </h1>
-                <p className="intro-description">
-                  サムネイルをタップして、キューに追加。
-                </p>
-              </div>
-              <div className="intro-mark" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-                <Icon name="play" size={29} />
-              </div>
-            </section>
             <div className="demo-banner">
               <span className="status-dot" />
               <p>
@@ -350,7 +337,7 @@ export function App() {
                 <div className="section-heading">
                   <div>
                     <p className="eyebrow">VIDEO LIBRARY</p>
-                    <h2>{currentChannel}</h2>
+                    <h1>{currentChannel}</h1>
                   </div>
                   <span className="count-label">{visible.length} 本</span>
                 </div>
@@ -377,9 +364,17 @@ export function App() {
                     </button>
                   </p>
                 )}
-                <div className={`video-list density-${settings.density}`}>
+                <div
+                  className="video-list"
+                  style={
+                    {
+                      "--list-scale": settings.densityPercent / 100,
+                    } as CSSProperties
+                  }
+                >
                   {visible.slice(0, limit).map((video) => {
-                    const added = saved.queue.includes(video.id);
+                    const queuePosition = saved.queue.indexOf(video.id) + 1;
+                    const added = queuePosition > 0;
                     const hidden = saved.hidden.includes(video.id);
                     return (
                       <article
@@ -388,8 +383,8 @@ export function App() {
                       >
                         <Thumbnail
                           video={video}
-                          added={added}
-                          onAdd={() => add(video)}
+                          queuePosition={queuePosition}
+                          onToggle={() => toggleQueue(video)}
                         />
                         <button
                           className="video-details"
@@ -415,11 +410,21 @@ export function App() {
                         </button>
                         <button
                           className={`add-button ${added ? "is-added" : ""}`}
-                          aria-label={`${video.title}を追加`}
-                          aria-disabled={added}
-                          onClick={() => add(video)}
+                          aria-label={
+                            added
+                              ? `${video.title}をキューから削除（再生順${queuePosition}）`
+                              : `${video.title}を追加`
+                          }
+                          aria-pressed={added}
+                          onClick={() => toggleQueue(video)}
                         >
-                          <Icon name={added ? "check" : "plus"} />
+                          {added ? (
+                            <span className="queue-position">
+                              {queuePosition}
+                            </span>
+                          ) : (
+                            <Icon name="plus" />
+                          )}
                         </button>
                       </article>
                     );
@@ -742,18 +747,25 @@ export function App() {
             <label className="setting-row">
               <span>表示密度</span>
               <select
-                value={settings.density}
+                value={settings.densityPercent}
                 onChange={(event) =>
                   updateSettings({
-                    density: event.target.value as Settings["density"],
+                    densityPercent: Number(event.target.value),
                   })
                 }
               >
-                <option value="compact">コンパクト</option>
-                <option value="standard">標準</option>
-                <option value="large">大きめ</option>
+                {Array.from({ length: 20 }, (_, index) => (index + 1) * 10).map(
+                  (percent) => (
+                    <option key={percent} value={percent}>
+                      {percent}%{percent === 100 ? "（標準）" : ""}
+                    </option>
+                  ),
+                )}
               </select>
             </label>
+            <p className="panel-note">
+              100%が標準です。大きいほど画像・文字・行間を広げます。押しやすさと読みやすさのため最小サイズを設けています。
+            </p>
             <label className="setting-row">
               <span>初回表示件数</span>
               <input
@@ -796,28 +808,29 @@ export function App() {
               />
             </label>
             <label className="setting-row">
-              <span>除外する秒数（以下）</span>
+              <span>除外する分数（以下）</span>
               <input
                 type="number"
-                min="1"
-                max="3600"
+                min={1 / 60}
+                max="60"
+                step="any"
                 disabled={!settings.excludeShort}
-                value={settings.shortThreshold}
+                value={settings.shortThreshold / 60}
                 onChange={(event) => {
                   const value = Number(event.target.value);
-                  if (Number.isInteger(value) && value >= 1 && value <= 3600)
-                    updateSettings({ shortThreshold: value });
+                  if (Number.isFinite(value) && value >= 1 / 60 && value <= 60)
+                    updateSettings({ shortThreshold: Math.round(value * 60) });
                 }}
               />
             </label>
             <p className="panel-note">
-              Shortsの暫定フィルターです。通常の短い動画も除外されます。
+              初期値は3分です。Shortsだけの正確な判別はできないため、通常の短い動画も除外されます。
             </p>
           </div>
           <div className="settings-section">
             <h3>この試作について</h3>
             <p className="panel-note">
-              v0.1.0 ·
+              v{appVersion} ·
               Google認証・登録チャンネル同期・端末間同期・PWAのインストールとオフライン更新は未実装です。
             </p>
             <p className="panel-note">
@@ -849,13 +862,15 @@ export function App() {
           <div className="action-menu">
             <button
               onClick={() => {
-                add(menuVideo);
+                toggleQueue(menuVideo);
                 setMenuVideo(null);
               }}
             >
-              <Icon name="plus" />
+              <Icon
+                name={saved.queue.includes(menuVideo.id) ? "close" : "plus"}
+              />
               {saved.queue.includes(menuVideo.id)
-                ? "キューに追加済み"
+                ? "キューから削除"
                 : "キューに追加"}
             </button>
             <button onClick={() => toggleHidden(menuVideo)}>

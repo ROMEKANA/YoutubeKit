@@ -6,6 +6,8 @@ import {
   moveItem,
   parseVideos,
   restoreState,
+  toggleQueueItem,
+  isExcludedByDuration,
 } from "./model";
 
 describe("キューと保存データ", () => {
@@ -22,7 +24,7 @@ describe("キューと保存データ", () => {
     const data = {
       queue: ["aqz-KE-bpKQ"],
       hidden: ["aqz-KE-bpKQ"],
-      settings: { ...defaultSettings, density: "large" },
+      settings: { ...defaultSettings, densityPercent: 150 },
     };
     expect(restoreState(JSON.stringify(data))).toEqual(data);
   });
@@ -44,5 +46,54 @@ describe("キューと保存データ", () => {
   });
   it("壊れた一覧データを拒否する", () => {
     expect(() => parseVideos([{ id: "broken" }])).toThrow();
+  });
+  it("サムネイルの再タップで対象だけ削除し、残りの再生順が詰まる", () => {
+    let queue = toggleQueueItem([], "aqz-KE-bpKQ");
+    queue = toggleQueueItem(queue, "eRsGyueVLvQ");
+    queue = toggleQueueItem(queue, "R6MlUcmOul8");
+    expect(queue.indexOf("R6MlUcmOul8") + 1).toBe(3);
+    queue = toggleQueueItem(queue, "eRsGyueVLvQ");
+    expect(queue).toEqual(["aqz-KE-bpKQ", "R6MlUcmOul8"]);
+    expect(queue.indexOf("R6MlUcmOul8") + 1).toBe(2);
+    expect(toggleQueueItem(queue, "eRsGyueVLvQ")).toEqual([
+      "aqz-KE-bpKQ",
+      "R6MlUcmOul8",
+      "eRsGyueVLvQ",
+    ]);
+  });
+  it("旧表示密度を移行してもキューと除外秒数を失わない", () => {
+    const state = restoreState(
+      JSON.stringify({
+        queue: ["aqz-KE-bpKQ"],
+        hidden: ["eRsGyueVLvQ"],
+        settings: { density: "large", shortThreshold: 90 },
+      }),
+    );
+    expect(state.settings.densityPercent).toBe(130);
+    expect(state.settings.shortThreshold / 60).toBe(1.5);
+    expect(state.queue).toEqual(["aqz-KE-bpKQ"]);
+    expect(state.hidden).toEqual(["eRsGyueVLvQ"]);
+  });
+  it("10%刻みの10〜200%を保存でき、不正な倍率は標準へ戻す", () => {
+    for (let percent = 10; percent <= 200; percent += 10) {
+      expect(
+        restoreState(JSON.stringify({ settings: { densityPercent: percent } }))
+          .settings.densityPercent,
+      ).toBe(percent);
+    }
+    for (const percent of [0, 15, 210, "200", null]) {
+      expect(
+        restoreState(JSON.stringify({ settings: { densityPercent: percent } }))
+          .settings.densityPercent,
+      ).toBe(100);
+    }
+  });
+  it("標準の3分以下を除外し、オフなら短い動画も表示する", () => {
+    expect(defaultSettings.shortThreshold / 60).toBe(3);
+    expect(isExcludedByDuration(180, defaultSettings)).toBe(true);
+    expect(isExcludedByDuration(181, defaultSettings)).toBe(false);
+    expect(
+      isExcludedByDuration(19, { ...defaultSettings, excludeShort: false }),
+    ).toBe(false);
   });
 });
