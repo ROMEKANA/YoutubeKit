@@ -1,28 +1,49 @@
 {
   "name": "youtube-queue-pwa-v2",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
+    "worker:types": "node scripts/wrangler.mjs types .wrangler/types/env.d.ts --env-interface Env --include-runtime=false --strict-vars=false",
+    "worker:check": "npm run worker:types && tsc -p tsconfig.worker.json",
+    "worker:dev": "node scripts/wrangler.mjs dev --ip 127.0.0.1 --port 8787",
+    "db:migrate": "node scripts/wrangler.mjs d1 migrations apply DB --local",
+    "secrets:init": "node scripts/init-secrets.mjs",
+    "worker:bundle": "esbuild ./worker/index.ts --bundle --format=esm --platform=neutral --target=es2022 --outfile=.wrangler/test/worker.mjs",
+    "test:worker": "npm run worker:bundle && vitest run tests/worker.test.ts",
+    "worker:dry-run": "node scripts/wrangler.mjs deploy --dry-run --outdir .wrangler/dry-run",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "vitest run",
+    "test": "vitest run src",
+    "test:all": "npm test && npm run test:worker",
     "typecheck": "tsc --noEmit",
-    "format": "prettier --write src public/demo-videos.json index.html vite.config.ts"
+    "format": "prettier --write src worker tests scripts public/demo-videos.json index.html vite.config.ts wrangler.jsonc"
   },
   "dependencies": {
+    "hono": "^4.13.14",
+    "jose": "^6.2.13",
+    "oauth4webapi": "^3.8.8",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261028.1",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/youtube": "^0.1.0",
     "@vitejs/plugin-react": "6.1.2",
+    "esbuild": "^0.28.2",
+    "miniflare": "^5.20261023.1-beta",
     "prettier": "^3.9.10",
     "typescript": "7.0.2",
     "vite": "8.3.5",
-    "vitest": "5.0.5"
+    "vitest": "5.0.5",
+    "wrangler": "^4.154.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "workerd@1.20261023.1": true
   }
 }

@@ -1,0 +1,79 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "youtube-kit-local",
+  "main": "worker/index.ts",
+  // 同梱のローカルランタイムが対応する日付に揃える。
+  "compatibility_date": "2026-10-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/auth/*"],
+  },
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      "head_sampling_rate": 1,
+    },
+  },
+  "triggers": { "crons": ["17 3 * * *"] },
+  "secrets": {
+    "required": [
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "TOKEN_ENCRYPTION_KEY",
+    ],
+  },
+  "vars": {
+    "APP_ORIGIN": "http://127.0.0.1:5173",
+    "ALLOWED_GOOGLE_EMAIL": "",
+    "ALLOWED_GOOGLE_SUB": "",
+    "ALLOW_DEMO": "true",
+    "UPLOAD_PAGES_PER_CHANNEL": "2",
+    "SYNC_OVERLAP_SECONDS": "600",
+    "CATALOG_LIMIT": "1000",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "youtube-kit-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "env": {
+    "production": {
+      "name": "youtube-kit",
+      "triggers": { "crons": ["17 3 * * *"] },
+      "secrets": {
+        "required": [
+          "GOOGLE_CLIENT_ID",
+          "GOOGLE_CLIENT_SECRET",
+          "TOKEN_ENCRYPTION_KEY",
+        ],
+      },
+      "vars": {
+        // 本番URLと許可アカウントを設定してからデプロイする。
+        "APP_ORIGIN": "https://replace-before-deploy.invalid",
+        "ALLOWED_GOOGLE_EMAIL": "",
+        "ALLOWED_GOOGLE_SUB": "",
+        "ALLOW_DEMO": "false",
+        "UPLOAD_PAGES_PER_CHANNEL": "2",
+        "SYNC_OVERLAP_SECONDS": "600",
+        "CATALOG_LIMIT": "1000",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "youtube-kit",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "migrations",
+        },
+      ],
+    },
+  },
+}

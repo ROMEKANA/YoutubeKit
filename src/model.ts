@@ -5,6 +5,8 @@ export interface Video {
   channel: string;
   publishedAt: string;
   durationSeconds: number;
+  thumbnailUrl?: string;
+  channelThumbnailUrl?: string;
 }
 
 export interface Settings {
@@ -140,21 +142,40 @@ export function formatDuration(seconds: number, total = false): string {
 export function parseVideos(value: unknown): Video[] {
   if (!Array.isArray(value))
     throw new Error("動画一覧の形式が正しくありません。");
-  return value
-    .map((v) => {
-      if (
-        !v ||
-        !/^[\w-]{11}$/.test(v.id) ||
-        typeof v.title !== "string" ||
-        typeof v.channelId !== "string" ||
-        typeof v.channel !== "string" ||
-        !Number.isFinite(Date.parse(v.publishedAt)) ||
-        !Number.isFinite(v.durationSeconds) ||
-        v.durationSeconds < 0
-      ) {
-        throw new Error("動画情報を読み込めませんでした。");
-      }
-      return v as Video;
-    })
-    .sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+  const parsed = value.map((item: unknown): Video => {
+    if (!item || typeof item !== "object")
+      throw new Error("動画情報を読み込めませんでした。");
+    const v = item as Record<string, unknown>;
+    if (
+      typeof v.id !== "string" ||
+      !/^[\w-]{11}$/.test(v.id) ||
+      typeof v.title !== "string" ||
+      typeof v.channelId !== "string" ||
+      typeof v.channel !== "string" ||
+      typeof v.publishedAt !== "string" ||
+      !Number.isFinite(Date.parse(v.publishedAt)) ||
+      typeof v.durationSeconds !== "number" ||
+      !Number.isFinite(v.durationSeconds) ||
+      v.durationSeconds < 0
+    ) {
+      throw new Error("動画情報を読み込めませんでした。");
+    }
+    const image = (url: unknown) =>
+      typeof url === "string" && url.startsWith("https://") ? url : undefined;
+    return {
+      id: v.id,
+      title: v.title,
+      channelId: v.channelId,
+      channel: v.channel,
+      publishedAt: v.publishedAt,
+      durationSeconds: v.durationSeconds,
+      ...(image(v.thumbnailUrl) && { thumbnailUrl: image(v.thumbnailUrl) }),
+      ...(image(v.channelThumbnailUrl) && {
+        channelThumbnailUrl: image(v.channelThumbnailUrl),
+      }),
+    };
+  });
+  return [...new Map(parsed.map((video) => [video.id, video])).values()].sort(
+    (a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt),
+  );
 }

@@ -47,6 +47,22 @@ describe("キューと保存データ", () => {
   it("壊れた一覧データを拒否する", () => {
     expect(() => parseVideos([{ id: "broken" }])).toThrow();
   });
+  it("実APIの画像URLを引き継ぎ、重複IDと不正な画像URLを除外する", () => {
+    const video = {
+      id: "aqz-KE-bpKQ",
+      title: "動画",
+      channelId: "channel",
+      channel: "チャンネル",
+      publishedAt: "2026-10-29T00:00:00Z",
+      durationSeconds: 200,
+      thumbnailUrl: "https://i.ytimg.com/vi/aqz-KE-bpKQ/mqdefault.jpg",
+      channelThumbnailUrl: "javascript:invalid",
+    };
+    const result = parseVideos([video, video]);
+    expect(result).toHaveLength(1);
+    expect(result[0].thumbnailUrl).toBe(video.thumbnailUrl);
+    expect(result[0].channelThumbnailUrl).toBeUndefined();
+  });
   it("サムネイルの再タップで対象だけ削除し、残りの再生順が詰まる", () => {
     let queue = toggleQueueItem([], "aqz-KE-bpKQ");
     queue = toggleQueueItem(queue, "eRsGyueVLvQ");

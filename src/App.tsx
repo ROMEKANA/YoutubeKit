@@ -11,7 +11,6 @@ import {
   isExcludedByDuration,
   formatDuration,
   moveItem,
-  parseVideos,
   restoreState,
   storageKey,
   type Settings,
@@ -19,6 +18,7 @@ import {
 } from "./model";
 import { Icon } from "./Icon";
 import { Player } from "./Player";
+import { useCatalog, type CatalogController } from "./useCatalog";
 
 type Panel = "channels" | "queue" | "settings" | null;
 const thumbnail = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
@@ -81,7 +81,7 @@ function Thumbnail({
       onClick={onToggle}
     >
       <img
-        src={thumbnail(video.id)}
+        src={video.thumbnailUrl || thumbnail(video.id)}
         alt=""
         loading="lazy"
         onError={(event) => {
@@ -97,9 +97,9 @@ function Thumbnail({
 }
 
 // 試作ではブラウザ内に保存する。本番のD1同期とは保存処理を分離している。
-function readInitialState() {
+function readInitialState(key: string) {
   try {
-    return { state: restoreState(localStorage.getItem(storageKey)), error: "" };
+    return { state: restoreState(localStorage.getItem(key)), error: "" };
   } catch {
     return {
       state: restoreState(null),
@@ -111,13 +111,25 @@ function readInitialState() {
 
 // 一覧の選択状態と保存済みキューを管理し、開始操作で再生セッションを作る。
 export function App() {
-  const [initial] = useState(readInitialState);
+  const catalog = useCatalog();
+  return <CatalogApp key={catalog.sourceKey} catalog={catalog} />;
+}
+
+// サンプルと実アカウントで保存先を分け、キューや非表示状態を混在させない。
+function CatalogApp({ catalog }: { catalog: CatalogController }) {
+  const stateKey =
+    catalog.sourceKey === "prototype"
+      ? storageKey
+      : `youtubekit.${catalog.sourceKey}.v1`;
+  const [initial] = useState(() => readInitialState(stateKey));
   const [saved, setSaved] = useState(initial.state);
   const [storageError, setStorageError] = useState(initial.error);
-  const [videos, setVideos] = useState<Video[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
-  const [updatedAt, setUpdatedAt] = useState("");
+  const videos = catalog.videos;
+  const loading = catalog.loading || catalog.checking;
+  const loadError = catalog.error;
+  const updatedAt = catalog.lastSyncedAt
+    ? new Date(catalog.lastSyncedAt * 1000).toLocaleString("ja-JP")
+    : "";
   const [panel, setPanel] = useState<Panel>(null);
   const [menuVideo, setMenuVideo] = useState<Video | null>(null);
   const [channelId, setChannelId] = useState("all");
@@ -126,27 +138,19 @@ export function App() {
   const [toast, setToast] = useState("");
   const [session, setSession] = useState<Video[] | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
-  const requestInFlight = useRef(false);
   const dragOrigin = useRef<number | null>(null);
   const dragTarget = useRef<number | null>(null);
   const settings = saved.settings;
-  const queueVideos = saved.queue.map((id) =>
-    videos.find((video) => video.id === id),
-  );
+  const knownVideos = useRef(new Map<string, Video>());
+  for (const video of videos) knownVideos.current.set(video.id, video);
+  const queueVideos = saved.queue.map((id) => knownVideos.current.get(id));
   const queueSeconds = queueVideos.reduce(
     (sum, video) => sum + (video?.durationSeconds ?? 0),
     0,
   );
   const canPlay =
     saved.queue.length > 0 && queueVideos.every((video) => video !== undefined);
-  const channels = [
-    ...new Map(
-      videos.map((video) => [
-        video.channelId,
-        { id: video.channelId, title: video.channel },
-      ]),
-    ).values(),
-  ].sort((a, b) => a.title.localeCompare(b.title, "ja"));
+  const channels = catalog.channels;
   const visible = videos.filter(
     (video) =>
       (channelId === "all" || video.channelId === channelId) &&
@@ -157,53 +161,18 @@ export function App() {
     channels.find((channel) => channel.id === channelId)?.title ??
     "すべてのチャンネル";
 
-  // 更新失敗時も、直前に読み込めた動画一覧と保存キューを残す。
-  async function refresh() {
-    if (requestInFlight.current) return;
-    requestInFlight.current = true;
-    setLoading(true);
-    setLoadError("");
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), 10000);
-    try {
-      const response = await fetch("/demo-videos.json", {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!response.ok) throw new Error("サンプル一覧を取得できませんでした。");
-      setVideos(parseVideos(await response.json()));
-      setUpdatedAt(
-        new Date().toLocaleTimeString("ja-JP", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-      );
-    } catch (error) {
-      setLoadError(
-        error instanceof Error && error.name !== "AbortError"
-          ? error.message
-          : "通信に失敗しました。更新ボタンから再試行してください。",
-      );
-    } finally {
-      window.clearTimeout(timeout);
-      requestInFlight.current = false;
-      setLoading(false);
-    }
-  }
-
+  const refresh = () => catalog.refresh();
   useEffect(() => {
-    void refresh();
-  }, []);
-  useEffect(() => {
+    if (catalog.sourceKey === "locked") return;
     try {
-      localStorage.setItem(storageKey, JSON.stringify(saved));
+      localStorage.setItem(stateKey, JSON.stringify(saved));
       setStorageError("");
     } catch {
       setStorageError(
         "変更を保存できませんでした。この画面を閉じる前に保存領域を確認してください。",
       );
     }
-  }, [saved]);
+  }, [saved, stateKey, catalog.sourceKey]);
   useEffect(() => {
     if (!toast) return;
     const timeout = window.setTimeout(() => setToast(""), 2600);
@@ -281,9 +250,17 @@ export function App() {
           <div className="header-actions">
             <button
               className={`icon-button ${loading ? "spinning" : ""}`}
-              aria-label="サンプル一覧を更新"
-              title="サンプル一覧を再読み込み"
-              disabled={loading || !!session}
+              aria-label="動画一覧を更新"
+              title={
+                catalog.isDemo
+                  ? "サンプル一覧を再読み込み"
+                  : "登録チャンネルと新着動画を更新"
+              }
+              disabled={
+                loading ||
+                !!session ||
+                (!catalog.isDemo && !catalog.auth?.authenticated)
+              }
               onClick={() => void refresh()}
             >
               <Icon name="refresh" />
@@ -322,8 +299,21 @@ export function App() {
             <div className="demo-banner">
               <span className="status-dot" />
               <p>
-                サンプルモード{" "}
-                <span>— 登録チャンネル連携前の、操作確認用の動画です。</span>
+                {catalog.checking
+                  ? "接続状態を確認中"
+                  : catalog.isDemo
+                    ? "サンプルモード"
+                    : catalog.auth?.authenticated
+                      ? "登録チャンネル"
+                      : "Googleアカウント未接続"}{" "}
+                <span>
+                  —{" "}
+                  {catalog.isDemo
+                    ? "Google接続の設定後に、実際の登録チャンネルを取得できます。"
+                    : catalog.auth?.authenticated
+                      ? "更新ボタンで前回の成功日時以降の動画を確認します。"
+                      : "設定からGoogleアカウントへ接続してください。"}
+                </span>
               </p>
               <button
                 className="text-button"
@@ -349,7 +339,7 @@ export function App() {
                     {loading
                       ? "読み込み中…"
                       : updatedAt
-                        ? `再読込 ${updatedAt}`
+                        ? `最終同期 ${updatedAt}`
                         : ""}
                   </span>
                 </div>
@@ -358,12 +348,42 @@ export function App() {
                     {loadError}{" "}
                     <button
                       className="text-button"
-                      onClick={() => void refresh()}
+                      onClick={() =>
+                        void (catalog.auth
+                          ? refresh()
+                          : catalog.checkConnection())
+                      }
                     >
                       再試行
                     </button>
                   </p>
                 )}
+                {catalog.progress && (
+                  <p className="sync-progress" role="status">
+                    {catalog.progress}
+                  </p>
+                )}
+                {!catalog.isDemo &&
+                  !catalog.auth?.authenticated &&
+                  !catalog.checking && (
+                    <div className="connection-prompt">
+                      <p>
+                        登録チャンネルの動画を見るにはGoogleアカウントへ接続してください。
+                      </p>
+                      {catalog.auth?.configured ? (
+                        <a className="primary" href="/auth/login">
+                          Googleアカウントに接続
+                        </a>
+                      ) : (
+                        <button
+                          className="secondary"
+                          onClick={() => setPanel("settings")}
+                        >
+                          接続設定を確認
+                        </button>
+                      )}
+                    </div>
+                  )}
                 <div
                   className="video-list"
                   style={
@@ -397,7 +417,15 @@ export function App() {
                               className={`avatar avatar-${video.channelId}`}
                               aria-hidden="true"
                             >
-                              {video.channel[0]}
+                              {video.channelThumbnailUrl ? (
+                                <img
+                                  src={video.channelThumbnailUrl}
+                                  alt=""
+                                  loading="lazy"
+                                />
+                              ) : (
+                                video.channel[0]
+                              )}
                             </span>
                             {video.channel}
                           </span>
@@ -515,9 +543,11 @@ export function App() {
                 </div>
               </aside>
             </div>
-            <p className="sample-note">
-              動画情報は試作用のサンプルです。日時・再生時間は概算を含み、最新情報とは異なる場合があります。
-            </p>
+            {catalog.isDemo && (
+              <p className="sample-note">
+                動画情報は試作用のサンプルです。日時・再生時間は概算を含み、最新情報とは異なる場合があります。
+              </p>
+            )}
           </>
         )}
       </main>
@@ -568,7 +598,9 @@ export function App() {
 
       {panel === "channels" && (
         <Modal title="チャンネル" drawer onClose={() => setPanel(null)}>
-          <p className="panel-note">サンプルチャンネル</p>
+          <p className="panel-note">
+            {catalog.isDemo ? "サンプルチャンネル" : "登録チャンネル"}
+          </p>
           <nav className="channel-nav">
             <button
               className={channelId === "all" ? "selected" : ""}
@@ -592,14 +624,20 @@ export function App() {
                 }}
               >
                 <span className={`avatar avatar-${channel.id}`}>
-                  {channel.title[0]}
+                  {channel.thumbnailUrl ? (
+                    <img src={channel.thumbnailUrl} alt="" loading="lazy" />
+                  ) : (
+                    channel.title[0]
+                  )}
                 </span>
                 {channel.title}
               </button>
             ))}
           </nav>
           <p className="panel-note">
-            Googleアカウント連携は次の段階で追加します。
+            {catalog.isDemo
+              ? "設定からGoogle接続を準備すると、登録チャンネルを自動取得できます。"
+              : "更新ボタンで登録・解除の状態を再同期できます。"}
           </p>
         </Modal>
       )}
@@ -676,7 +714,11 @@ export function App() {
                   >
                     <Icon name="grip" size={18} />
                   </button>
-                  <img className="queue-thumb" src={thumbnail(id)} alt="" />
+                  <img
+                    className="queue-thumb"
+                    src={video?.thumbnailUrl || thumbnail(id)}
+                    alt=""
+                  />
                   <div className="queue-item-info">
                     <strong>
                       {index + 1}. {video?.title ?? `取得できない動画 (${id})`}
@@ -736,11 +778,94 @@ export function App() {
       {panel === "settings" && (
         <Modal title="設定" onClose={() => setPanel(null)}>
           <div className="connection-card">
-            <span className="tag">サンプルモード</span>
-            <h3>Googleアカウント未接続</h3>
+            <span className="tag">
+              {catalog.auth?.authenticated
+                ? "接続済み"
+                : catalog.isDemo
+                  ? "サンプルモード"
+                  : "未接続"}
+            </span>
+            <h3>{catalog.auth?.account?.email ?? "Googleアカウント未接続"}</h3>
             <p>
-              現在はサンプル動画で操作を試せます。キュー・非表示・設定はこのブラウザ内だけに保存されます。
+              {catalog.auth?.authenticated
+                ? "登録チャンネルと動画情報はサーバーに保存されます。キュー・非表示・設定は、この段階ではブラウザごとの保存です。"
+                : catalog.backendOffline
+                  ? "バックエンドが起動していません。READMEの手順でバックエンドを起動してください。"
+                  : catalog.auth?.configured
+                    ? "許可されたGoogleアカウントだけが利用できます。"
+                    : "Google接続の設定が必要です。開発フォルダ内の docs/セットアップ.md を参照してください。"}
             </p>
+            {!!catalog.auth?.missing.length && (
+              <p className="panel-note">
+                未設定: {catalog.auth.missing.join("、")}
+              </p>
+            )}
+            <div className="connection-actions">
+              {catalog.auth?.configured && (
+                <a className="primary" href="/auth/login">
+                  {catalog.auth.authenticated
+                    ? "Googleへ再接続"
+                    : "Googleアカウントに接続"}
+                </a>
+              )}
+              {!catalog.auth?.authenticated && (
+                <button
+                  className="secondary"
+                  disabled={loading}
+                  onClick={() => void catalog.checkConnection()}
+                >
+                  接続状態を再確認
+                </button>
+              )}
+              {catalog.auth?.authenticated && (
+                <>
+                  <button
+                    className="secondary"
+                    disabled={loading}
+                    onClick={() => void catalog.refresh(true)}
+                  >
+                    登録チャンネルと過去分を再取得
+                  </button>
+                  <button
+                    className="text-button"
+                    disabled={loading}
+                    onClick={() => void catalog.endConnection()}
+                  >
+                    ログアウト
+                  </button>
+                  <button
+                    className="text-button danger"
+                    disabled={loading}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "Google接続を解除し、サーバーの動画・トークン・セッションを削除しますか？所有者固定用の識別子と、このブラウザのキューは保持されます。",
+                        )
+                      )
+                        void catalog.endConnection(true);
+                    }}
+                  >
+                    接続解除とサーバーデータ削除
+                  </button>
+                </>
+              )}
+            </div>
+            {catalog.watermark && (
+              <p className="panel-note">
+                次回更新の基準:{" "}
+                {new Date(catalog.watermark * 1000).toLocaleString("ja-JP")}
+              </p>
+            )}
+            {catalog.progress && (
+              <p className="panel-note" role="status">
+                {catalog.progress}
+              </p>
+            )}
+            {catalog.error && (
+              <p className="notice error" role="alert">
+                {catalog.error}
+              </p>
+            )}
           </div>
           <div className="settings-section">
             <h3>動画一覧</h3>
@@ -831,12 +956,15 @@ export function App() {
             <h3>この試作について</h3>
             <p className="panel-note">
               v{appVersion} ·
-              Google認証・登録チャンネル同期・端末間同期・PWAのインストールとオフライン更新は未実装です。
+              Google認証・登録チャンネル同期に対応しました。キューの端末間同期・PWAのインストールとオフライン更新は次の段階です。
             </p>
             <p className="panel-note">
               プレーヤーにはYouTubeの利用規約とプライバシーポリシーが適用されます。
             </p>
             <div className="legal-links">
+              <a href="/privacy.html" target="_blank" rel="noreferrer">
+                このアプリのデータの取り扱い ↗
+              </a>
               <a
                 href="https://www.youtube.com/t/terms"
                 target="_blank"

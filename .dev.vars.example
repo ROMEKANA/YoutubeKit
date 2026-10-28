@@ -1,0 +1,10 @@
+# このファイルを .dev.vars にコピーし、手元だけで値を設定する。
+# .dev.vars の実値はGitやチャットに含めない。
+GOOGLE_CLIENT_ID="replace-with-your-web-client-id.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET="replace-with-your-client-secret"
+# Node.jsのcrypto.randomBytes(32).toString('base64')で生成する32バイト鍵。
+TOKEN_ENCRYPTION_KEY="replace-with-random-base64-key"
+# 初回だけ検証済みメールで本人のsubを固定する。後からメールを変えても所有者は変わらない。
+ALLOWED_GOOGLE_EMAIL="your-account@example.com"
+# subが分かっている場合はメール指定の代わりにこちらを使用する。
+ALLOWED_GOOGLE_SUB=""
