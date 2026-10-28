@@ -1,0 +1,46 @@
+type Name =
+  | "menu"
+  | "refresh"
+  | "eye"
+  | "settings"
+  | "plus"
+  | "check"
+  | "play"
+  | "close"
+  | "list"
+  | "arrow"
+  | "grip"
+  | "trash";
+const paths: Record<Name, string> = {
+  menu: "M4 6h16M4 12h16M4 18h16",
+  refresh: "M20 8a8 8 0 1 0 0 8M20 3v5h-5",
+  eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
+  settings:
+    "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2",
+  plus: "M12 5v14M5 12h14",
+  check: "m5 12 4 4L19 6",
+  play: "m8 4 12 8-12 8V4Z",
+  close: "m6 6 12 12M6 18 18 6",
+  list: "M9 5h12M9 12h12M9 19h12M3 5h.1M3 12h.1M3 19h.1",
+  arrow: "m9 5 7 7-7 7",
+  grip: "M9 5h.1M15 5h.1M9 12h.1M15 12h.1M9 19h.1M15 19h.1",
+  trash: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7",
+};
+
+export function Icon({ name, size = 20 }: { name: Name; size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={paths[name]} />
+    </svg>
+  );
+}
