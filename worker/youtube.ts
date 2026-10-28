@@ -128,21 +128,39 @@ export class YouTubeClient {
         502,
       );
     }
-    const body = record(await limitedJson(response));
+    // JSONでない障害応答でも、認証切れや利用上限をチャンネル固有の失敗にしない。
+    if (response.status === 401 || response.status === 429) {
+      await response.body?.cancel();
+      throw new AppError(
+        response.status === 401 ? "RECONNECT_REQUIRED" : "YOUTUBE_QUOTA",
+        response.status === 401
+          ? "YouTubeの認証期限が切れました。Googleへ再接続してください。"
+          : "YouTube APIの利用上限に達しました。時間をおいて再試行してください。",
+        response.status,
+      );
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = record(await limitedJson(response));
+    } catch (error) {
+      if (!response.ok && response.status < 500)
+        throw new AppError(
+          "YOUTUBE_REQUEST_FAILED",
+          `YouTubeから情報を取得できませんでした（HTTP ${response.status}）。`,
+          502,
+        );
+      throw error;
+    }
     if (!response.ok) {
       const error = record(body.error);
       const reasons = Array.isArray(error.errors)
         ? error.errors.map((entry) => text(record(entry).reason))
         : [];
-      if (response.status === 401)
-        throw new AppError(
-          "RECONNECT_REQUIRED",
-          "YouTubeの認証期限が切れました。Googleへ再接続してください。",
-          401,
-        );
       if (
         reasons.includes("quotaExceeded") ||
-        reasons.includes("dailyLimitExceeded")
+        reasons.includes("dailyLimitExceeded") ||
+        reasons.includes("rateLimitExceeded") ||
+        reasons.includes("userRateLimitExceeded")
       )
         throw new AppError(
           "YOUTUBE_QUOTA",
@@ -161,9 +179,30 @@ export class YouTubeClient {
           `登録チャンネルの読み取り権限が必要です。再接続してください。`,
           403,
         );
+      // APIの生の本文は返さず、既知の理由とHTTP番号だけを診断に使う。
+      const descriptions: Record<string, string> = {
+        playlistNotFound: "投稿一覧が見つかりません",
+        playlistItemsNotAccessible: "投稿一覧へのアクセスが許可されていません",
+        playlistOperationUnsupported: "この投稿一覧はAPI取得に対応していません",
+        channelClosed: "チャンネルが閉鎖されています",
+        channelSuspended: "チャンネルが停止されています",
+        channelNotFound: "チャンネルが見つかりません",
+        videoNotFound: "動画が見つかりません",
+        forbidden: "対象へのアクセスが拒否されました",
+        invalidPageToken: "ページ情報の期限が切れています",
+      };
+      const reason = reasons.find((value) =>
+        Object.hasOwn(descriptions, value),
+      );
+      if (reason || response.status === 404 || response.status >= 500)
+        throw new AppError(
+          "YOUTUBE_ITEM_FAILED",
+          `${reason ? descriptions[reason] : "対象の取得に失敗しました"}（HTTP ${response.status}${reason ? ` / ${reason}` : ""}）。`,
+          502,
+        );
       throw new AppError(
         "YOUTUBE_REQUEST_FAILED",
-        "YouTubeから情報を取得できませんでした。取得済み一覧は保持されています。",
+        `YouTubeから情報を取得できませんでした（HTTP ${response.status}）。取得済み一覧は保持されています。`,
         502,
       );
     }

@@ -2,6 +2,7 @@ import { accessToken, now, requireSession, type WorkerContext } from "./auth";
 import { boundedInteger } from "./config";
 import { AppError, requireCondition } from "./errors";
 import { decryptSecret, encryptSecret, randomToken } from "./security";
+import { parseSyncIssues, type SyncIssue } from "../shared/sync";
 import {
   record,
   selectRecentUploads,
@@ -19,6 +20,7 @@ interface JobState {
   channelIndex: number;
   uploadPage: number;
   videosUpdated: number;
+  issues: SyncIssue[];
 }
 
 interface JobRow {
@@ -78,6 +80,7 @@ function parseState(raw: string): JobState {
     channelIndex: Number(value.channelIndex),
     uploadPage: Number(value.uploadPage),
     videosUpdated: Number(value.videosUpdated),
+    issues: parseSyncIssues(value.issues),
   };
 }
 
@@ -89,6 +92,7 @@ function summary(row: JobRow, state = parseState(row.state_json)) {
     processedChannels: state.channelIndex,
     videosUpdated: state.videosUpdated,
     done: state.phase === "done",
+    issues: state.issues,
   };
 }
 
@@ -139,6 +143,7 @@ export async function startSync(c: WorkerContext): Promise<Response> {
     .bind(session.sub)
     .first<{ video_watermark: number | null }>();
   const overlap = boundedInteger(c.env.SYNC_OVERLAP_SECONDS, 600, 86400);
+  const previous = current ? parseState(current.state_json) : null;
   const state: JobState = {
     phase: "subscriptions",
     startedAt,
@@ -147,10 +152,20 @@ export async function startSync(c: WorkerContext): Promise<Response> {
       : Math.max(0, (watermark?.video_watermark ?? 0) - overlap),
     pageToken: "",
     channelIds: [],
-    freshIds: [],
+    // 一部失敗した再取得は、次の通常更新でも過去分の取得をやり直す。
+    freshIds: previous
+      ? previous.issues
+          .filter(
+            (issue) =>
+              previous.cutoff === 0 ||
+              previous.freshIds.includes(issue.channelId),
+          )
+          .map((issue) => issue.channelId)
+      : [],
     channelIndex: 0,
     uploadPage: 0,
     videosUpdated: 0,
+    issues: [],
   };
   const jobId = randomToken();
   const token = await accessToken(c.env, session);
@@ -354,38 +369,63 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
       const id = state.channelIds[state.channelIndex];
       const channel = id
         ? await c.env.DB.prepare(
-            "SELECT uploads_playlist_id FROM channels WHERE sub = ? AND channel_id = ?",
+            "SELECT title, uploads_playlist_id FROM channels WHERE sub = ? AND channel_id = ?",
           )
             .bind(session.sub, id)
-            .first<{ uploads_playlist_id: string }>()
+            .first<{ title: string; uploads_playlist_id: string }>()
         : null;
-      if (channel?.uploads_playlist_id) {
-        const page = await api.uploads(
-          channel.uploads_playlist_id,
-          state.pageToken,
-        );
-        const cutoff = state.freshIds.includes(id) ? 0 : state.cutoff;
-        const recent = selectRecentUploads(page.items, cutoff);
-        saveVideos(
-          (await api.videos(recent.ids)).filter(
-            (video) => video.channelId === id,
-          ),
-        );
-        state.uploadPage += 1;
-        if (
-          page.nextPageToken &&
-          !recent.reachedCutoff &&
-          (cutoff > 0 ||
-            state.uploadPage <
-              boundedInteger(c.env.UPLOAD_PAGES_PER_CHANNEL, 2, 20))
-        )
-          state.pageToken = page.nextPageToken;
-        else {
-          state.channelIndex += 1;
-          state.pageToken = "";
-          state.uploadPage = 0;
+      let finishedChannel = true;
+      try {
+        if (channel?.uploads_playlist_id) {
+          const page = await api.uploads(
+            channel.uploads_playlist_id,
+            state.pageToken,
+          );
+          const cutoff = state.freshIds.includes(id) ? 0 : state.cutoff;
+          const recent = selectRecentUploads(page.items, cutoff);
+          saveVideos(
+            (await api.videos(recent.ids)).filter(
+              (video) => video.channelId === id,
+            ),
+          );
+          state.uploadPage += 1;
+          if (
+            page.nextPageToken &&
+            !recent.reachedCutoff &&
+            (cutoff > 0 ||
+              state.uploadPage <
+                boundedInteger(c.env.UPLOAD_PAGES_PER_CHANNEL, 2, 20))
+          ) {
+            state.pageToken = page.nextPageToken;
+            finishedChannel = false;
+          }
+        } else if (id) {
+          throw new AppError(
+            "YOUTUBE_ITEM_FAILED",
+            "チャンネルの投稿一覧を取得できませんでした。",
+            502,
+          );
         }
-      } else {
+      } catch (error) {
+        // 認証・利用上限・設定・DB障害は継続せず、対象固有の失敗だけ記録して次へ進む。
+        if (
+          !(error instanceof AppError) ||
+          ![
+            "YOUTUBE_ITEM_FAILED",
+            "YOUTUBE_UNAVAILABLE",
+            "YOUTUBE_RESPONSE",
+            "YOUTUBE_PAGING",
+          ].includes(error.code)
+        )
+          throw error;
+        state.issues.push({
+          channelId: id,
+          title: channel?.title || id,
+          code: error.code,
+          message: error.message,
+        });
+      }
+      if (finishedChannel) {
         state.channelIndex += 1;
         state.pageToken = "";
         state.uploadPage = 0;
@@ -413,12 +453,14 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
         );
       if (!ids.length) {
         state.phase = "done";
-        writes.push(
-          guarded(
-            "UPDATE accounts SET last_synced_at = ?, video_watermark = ? WHERE sub = ? AND $guard",
-            [now(), state.startedAt, session.sub],
-          ),
-        );
+        // 一部失敗時も正常な動画は利用できるが、未取得範囲を飛ばす基準更新は行わない。
+        if (!state.issues.length)
+          writes.push(
+            guarded(
+              "UPDATE accounts SET last_synced_at = ?, video_watermark = ? WHERE sub = ? AND $guard",
+              [now(), state.startedAt, session.sub],
+            ),
+          );
       }
     }
 
@@ -481,11 +523,17 @@ export async function getCatalog(c: WorkerContext): Promise<Response> {
   )
     .bind(session.sub)
     .first<{ last_synced_at: number | null; video_watermark: number | null }>();
+  const job = await c.env.DB.prepare(
+    "SELECT state_json FROM sync_jobs WHERE sub = ? AND expires_at > ?",
+  )
+    .bind(session.sub, now())
+    .first<{ state_json: string }>();
   return c.json({
     channels: channels.results,
     videos: videos.results,
     lastSyncedAt: account?.last_synced_at ?? null,
     watermark: account?.video_watermark ?? null,
     limit,
+    issues: job ? parseState(job.state_json).issues : [],
   });
 }

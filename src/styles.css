@@ -675,6 +675,24 @@ small {
   background: #faebe4;
   border: 1px solid #ebccc2;
 }
+.sync-warning {
+  color: #72591f;
+  background: #fff6df;
+  border: 1px solid #e7d29a;
+}
+.sync-warning summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.sync-warning ul {
+  padding-left: 20px;
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.sync-warning li + li {
+  margin-top: 8px;
+}
 .empty-state {
   padding: 35px 10px;
   text-align: center;

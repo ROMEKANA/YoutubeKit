@@ -8,7 +8,12 @@ import { readFile } from "node:fs/promises";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
 import { encryptSecret } from "../worker/security";
 import { cleanup } from "../worker/cleanup";
-import { durationSeconds, selectRecentUploads } from "../worker/youtube";
+import {
+  durationSeconds,
+  selectRecentUploads,
+  YouTubeClient,
+} from "../worker/youtube";
+import type { SyncIssue } from "../shared/sync";
 
 const origin = "https://app.example.net";
 const sub = "123456789012345678901";
@@ -29,6 +34,13 @@ let seen: string[] = [];
 let sessionCookie = "";
 let csrf = "";
 let corruptSignature = false;
+let uploadFailure: {
+  playlist: string;
+  status: number;
+  reason: string;
+  page?: string;
+} | null = null;
+let extraUploadPage = false;
 
 const seconds = () => Math.floor(Date.now() / 1000);
 const published = (ago: number) =>
@@ -98,10 +110,28 @@ async function upstream(request: Request) {
       })),
     });
   if (url.pathname === "/youtube/v3/playlistItems") {
+    if (
+      uploadFailure &&
+      url.searchParams.get("playlistId") === uploadFailure.playlist &&
+      (!uploadFailure.page ||
+        url.searchParams.get("pageToken") === uploadFailure.page)
+    )
+      return json(
+        {
+          error: {
+            message: "非表示にする上流の生メッセージ",
+            errors: [{ reason: uploadFailure.reason }],
+          },
+        },
+        uploadFailure.status,
+      );
     if (url.searchParams.get("playlistId") === "uploads-B")
       return json({ items: [] });
     if (url.searchParams.get("pageToken"))
       return json({
+        ...(extraUploadPage && url.searchParams.get("pageToken") === "uploads-2"
+          ? { nextPageToken: "uploads-3" }
+          : {}),
         items: [
           {
             contentDetails: {
@@ -278,13 +308,19 @@ async function authenticated() {
 async function runSync(full = false) {
   const started = await post("/api/sync/start", { full });
   expect(started.status, await started.clone().text()).toBe(200);
-  let state = await started.json<{ jobId: string; done: boolean }>();
+  let state = await started.json<{
+    jobId: string;
+    done: boolean;
+    issues: SyncIssue[];
+    processedChannels: number;
+  }>();
   for (let steps = 0; !state.done && steps < 20; steps++) {
     const response = await post("/api/sync/step", { jobId: state.jobId });
     expect(response.status, await response.clone().text()).toBe(200);
     state = await response.json();
   }
   expect(state.done).toBe(true);
+  return state;
 }
 
 beforeAll(async () => {
@@ -320,6 +356,8 @@ beforeEach(async () => {
   sessionCookie = "";
   csrf = "";
   corruptSignature = false;
+  uploadFailure = null;
+  extraUploadPage = false;
 });
 afterAll(async () => {
   await mf?.dispose();
@@ -490,6 +528,135 @@ describe("チャンネル同期と日時による差分取得", () => {
     quotaFailure = false;
     await runSync();
   });
+  it.each([
+    [404, "playlistNotFound"],
+    [403, "playlistItemsNotAccessible"],
+    [500, "backendError"],
+  ])(
+    "チャンネルのHTTP %i失敗を記録し、後続を取得して部分結果を表示できる",
+    async (status, reason) => {
+      await authenticated();
+      uploadFailure = { playlist: "uploads-B", status, reason };
+      const result = await runSync();
+      expect(result.processedChannels).toBe(2);
+      expect(result.issues).toHaveLength(1);
+      expect(result.issues[0].title).toBe("チャンネルB");
+      expect(result.issues[0].message).toContain(`HTTP ${status}`);
+      const response = await mf.dispatchFetch(`${origin}/api/catalog`, {
+        headers: { Cookie: sessionCookie },
+      });
+      const body = await response.json<{
+        videos: unknown[];
+        watermark: null;
+        issues: SyncIssue[];
+      }>();
+      expect(body.videos).toHaveLength(3);
+      expect(body.watermark).toBeNull();
+      expect(body.issues).toEqual(result.issues);
+      expect(JSON.stringify(body)).not.toContain(
+        "非表示にする上流の生メッセージ",
+      );
+      expect(
+        await db
+          .prepare("SELECT last_synced_at FROM accounts")
+          .first("last_synced_at"),
+      ).toBeNull();
+    },
+  );
+  it("途中ページの失敗でも取得済み動画を残し、後続チャンネルへ進み、次回は過去分も再試行する", async () => {
+    await authenticated();
+    await runSync();
+    const previousWatermark = seconds() - 7200;
+    await db
+      .prepare("UPDATE accounts SET video_watermark = ?")
+      .bind(previousWatermark)
+      .run();
+    uploadFailure = {
+      playlist: "uploads-A",
+      status: 404,
+      reason: "playlistNotFound",
+      page: "uploads-2",
+    };
+    seen = [];
+    const result = await runSync(true);
+    expect(result.issues[0].channelId).toBe(channelA);
+    expect(seen.some((url) => url.includes("playlistId=uploads-B"))).toBe(true);
+    expect(
+      await db.prepare("SELECT COUNT(*) AS n FROM videos").first("n"),
+    ).toBe(3);
+    expect(
+      await db
+        .prepare("SELECT video_watermark FROM accounts")
+        .first("video_watermark"),
+    ).toBe(previousWatermark);
+    uploadFailure = null;
+    seen = [];
+    const retried = await runSync();
+    expect(retried.issues).toEqual([]);
+    expect(seen.some((url) => url.includes("pageToken=uploads-2"))).toBe(true);
+    expect(
+      await db
+        .prepare("SELECT video_watermark FROM accounts")
+        .first("video_watermark"),
+    ).toBeGreaterThan(previousWatermark);
+  });
+  it.each([
+    [401, "authError", 401],
+    [403, "quotaExceeded", 429],
+    [429, "unknown", 429],
+    [403, "insufficientPermissions", 403],
+  ])(
+    "認証・利用上限のHTTP %iは飛ばさず全体を中断する",
+    async (status, reason, expected) => {
+      await authenticated();
+      const started = await post("/api/sync/start", {});
+      const state = await started.json<{ jobId: string }>();
+      for (let step = 0; step < 3; step++)
+        expect((await post("/api/sync/step", state)).status).toBe(200);
+      uploadFailure = { playlist: "uploads-A", status, reason };
+      seen = [];
+      expect((await post("/api/sync/step", state)).status).toBe(expected);
+      expect(seen.some((url) => url.includes("playlistId=uploads-B"))).toBe(
+        false,
+      );
+      expect(
+        await db
+          .prepare("SELECT video_watermark FROM accounts")
+          .first("video_watermark"),
+      ).toBeNull();
+    },
+  );
+  it("警告フィールドのない更新前のジョブも続きから再開する", async () => {
+    await authenticated();
+    const started = await post("/api/sync/start", {});
+    const state = await started.json<{ jobId: string }>();
+    await db
+      .prepare(
+        "UPDATE sync_jobs SET state_json = json_remove(state_json, '$.issues')",
+      )
+      .run();
+    expect((await post("/api/sync/step", state)).status).toBe(200);
+    expect((await runSync()).issues).toEqual([]);
+  });
+  it("通常更新の失敗を再試行しても初回用の2ページ上限へ切り替わらない", async () => {
+    await authenticated();
+    await runSync();
+    await db
+      .prepare("UPDATE accounts SET video_watermark = ?")
+      .bind(seconds() - 20 * 86400)
+      .run();
+    uploadFailure = {
+      playlist: "uploads-A",
+      status: 404,
+      reason: "playlistNotFound",
+    };
+    expect((await runSync()).issues).toHaveLength(1);
+    uploadFailure = null;
+    extraUploadPage = true;
+    seen = [];
+    expect((await runSync()).issues).toEqual([]);
+    expect(seen.some((url) => url.includes("pageToken=uploads-3"))).toBe(true);
+  });
   it("同時開始は同じジョブへ合流し、別処理のリース中はステップを拒否する", async () => {
     await authenticated();
     const [a, b] = await Promise.all([
@@ -552,6 +719,19 @@ describe("チャンネル同期と日時による差分取得", () => {
     );
   });
 });
+
+it.each([401, 429])(
+  "JSON以外のHTTP %iも認証・利用上限として扱う",
+  async (status) => {
+    const api = new YouTubeClient(
+      "test-access",
+      async () => new Response("temporarily unavailable", { status }),
+    );
+    await expect(api.uploads("uploads-A")).rejects.toMatchObject({
+      code: status === 401 ? "RECONNECT_REQUIRED" : "YOUTUBE_QUOTA",
+    });
+  },
+);
 
 it("動画の期間を秒に変換し、更新日時の境界を含めて抽出する", () => {
   expect(durationSeconds("P1DT2H3M4S")).toBe(93784);

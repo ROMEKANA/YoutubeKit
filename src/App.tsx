@@ -115,6 +115,37 @@ export function App() {
   return <CatalogApp key={catalog.sourceKey} catalog={catalog} />;
 }
 
+// 取得できた一覧を使いながら、飛ばした対象と次の操作を確認できるようにする。
+function SyncWarnings({ catalog }: { catalog: CatalogController }) {
+  return (
+    <div className="notice sync-warning" role="status">
+      <p>
+        取得できないチャンネルが{catalog.issues.length}
+        件あります。残りの取得は続行し、取得できた動画を表示します。更新の基準日時は進めません。
+      </p>
+      <details>
+        <summary>チャンネル名と取得できなかった理由</summary>
+        <ul>
+          {catalog.issues.map((issue) => (
+            <li key={issue.channelId}>
+              <strong>{issue.title}</strong>
+              <br />
+              {issue.message}
+            </li>
+          ))}
+        </ul>
+      </details>
+      <button
+        className="text-button"
+        disabled={catalog.loading || catalog.checking}
+        onClick={() => void catalog.refresh()}
+      >
+        更新を再試行
+      </button>
+    </div>
+  );
+}
+
 // サンプルと実アカウントで保存先を分け、キューや非表示状態を混在させない。
 function CatalogApp({ catalog }: { catalog: CatalogController }) {
   const stateKey =
@@ -362,6 +393,9 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
                   <p className="sync-progress" role="status">
                     {catalog.progress}
                   </p>
+                )}
+                {catalog.issues.length > 0 && (
+                  <SyncWarnings catalog={catalog} />
                 )}
                 {!catalog.isDemo &&
                   !catalog.auth?.authenticated &&
@@ -866,6 +900,7 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
                 {catalog.error}
               </p>
             )}
+            {catalog.issues.length > 0 && <SyncWarnings catalog={catalog} />}
           </div>
           <div className="settings-section">
             <h3>動画一覧</h3>

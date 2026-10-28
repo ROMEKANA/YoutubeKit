@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { parseVideos, type Video } from "./model";
+import { parseSyncIssues, type SyncIssue } from "../shared/sync";
 
 export interface Channel {
   id: string;
@@ -20,6 +21,7 @@ interface Catalog {
   channels: Channel[];
   lastSyncedAt: number | null;
   watermark: number | null;
+  issues: SyncIssue[];
 }
 interface Progress {
   jobId: string;
@@ -34,6 +36,7 @@ const emptyCatalog: Catalog = {
   channels: [],
   lastSyncedAt: null,
   watermark: null,
+  issues: [],
 };
 
 export class ApiError extends Error {
@@ -129,6 +132,7 @@ function parseCatalog(value: unknown): Catalog {
     lastSyncedAt:
       typeof data.lastSyncedAt === "number" ? data.lastSyncedAt : null,
     watermark: typeof data.watermark === "number" ? data.watermark : null,
+    issues: parseSyncIssues(data.issues),
   };
 }
 
@@ -205,7 +209,13 @@ export function useCatalog() {
           ]),
         ).values(),
       ].sort((a, b) => a.title.localeCompare(b.title, "ja"));
-      setCatalog({ videos, channels, watermark: null, lastSyncedAt: null });
+      setCatalog({
+        videos,
+        channels,
+        watermark: null,
+        lastSyncedAt: null,
+        issues: [],
+      });
     } else setCatalog(emptyCatalog);
   }
 
@@ -308,6 +318,14 @@ export function useCatalog() {
       if (!nextController.signal.aborted)
         await readCatalog(auth, nextController.signal);
     } catch (reason) {
+      // 全体が中断した場合も、その時点までに保存できた動画を一覧へ反映する。
+      if (auth.authenticated && !nextController.signal.aborted) {
+        try {
+          await readCatalog(auth, nextController.signal);
+        } catch {
+          /* 最初の失敗理由を優先して表示する。 */
+        }
+      }
       if (!nextController.signal.aborted)
         setError(
           reason instanceof Error
