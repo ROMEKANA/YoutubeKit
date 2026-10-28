@@ -3,6 +3,7 @@ import { boundedInteger } from "./config";
 import { AppError, requireCondition } from "./errors";
 import { decryptSecret, encryptSecret, randomToken } from "./security";
 import { parseSyncIssues, type SyncIssue } from "../shared/sync";
+import { videoStatement, rangeAssignments } from "./videoStore";
 import {
   record,
   selectRecentUploads,
@@ -21,6 +22,7 @@ interface JobState {
   uploadPage: number;
   videosUpdated: number;
   issues: SyncIssue[];
+  full: boolean;
 }
 
 interface JobRow {
@@ -81,6 +83,7 @@ function parseState(raw: string): JobState {
     uploadPage: Number(value.uploadPage),
     videosUpdated: Number(value.videosUpdated),
     issues: parseSyncIssues(value.issues),
+    full: value.full === true,
   };
 }
 
@@ -97,7 +100,9 @@ function summary(row: JobRow, state = parseState(row.state_json)) {
 }
 
 // 小さいJSONだけを受け取り、変更操作を認証・CSRF検証した後で同期を始める。
-async function requestBody(c: WorkerContext): Promise<Record<string, unknown>> {
+export async function requestBody(
+  c: WorkerContext,
+): Promise<Record<string, unknown>> {
   requireCondition(
     c.req.header("Content-Type")?.startsWith("application/json"),
     "JSON_REQUIRED",
@@ -133,7 +138,8 @@ export async function startSync(c: WorkerContext): Promise<Response> {
   if (
     current &&
     current.expires_at > now() &&
-    parseState(current.state_json).phase !== "done"
+    parseState(current.state_json).phase !== "done" &&
+    parseState(current.state_json).full === (body.full === true)
   )
     return c.json(summary(current));
   const startedAt = now();
@@ -166,6 +172,7 @@ export async function startSync(c: WorkerContext): Promise<Response> {
     uploadPage: 0,
     videosUpdated: 0,
     issues: [],
+    full: body.full === true,
   };
   const jobId = randomToken();
   const token = await accessToken(c.env, session);
@@ -179,7 +186,8 @@ export async function startSync(c: WorkerContext): Promise<Response> {
     `INSERT INTO sync_jobs(sub, job_id, state_json, access_token_cipher, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(sub) DO UPDATE SET job_id = excluded.job_id, state_json = excluded.state_json, access_token_cipher = excluded.access_token_cipher,
     lease_token = NULL, lease_until = 0, updated_at = excluded.updated_at, expires_at = excluded.expires_at
-    WHERE sync_jobs.expires_at <= ? OR json_extract(sync_jobs.state_json, '$.phase') = 'done'`,
+    WHERE sync_jobs.expires_at <= ? OR json_extract(sync_jobs.state_json, '$.phase') = 'done'
+    OR (COALESCE(json_extract(sync_jobs.state_json, '$.full'), 0) <> ? AND sync_jobs.lease_until <= ?)`,
   )
     .bind(
       session.sub,
@@ -188,6 +196,8 @@ export async function startSync(c: WorkerContext): Promise<Response> {
       cipher,
       startedAt,
       startedAt + 3600,
+      startedAt,
+      Number(body.full === true),
       startedAt,
     )
     .run();
@@ -218,9 +228,19 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
   const acquired = await c.env.DB.prepare(
     `UPDATE sync_jobs SET lease_token = ?, lease_until = ?
     WHERE sub = ? AND job_id = ? AND expires_at > ? AND lease_until <= ?
+    AND NOT EXISTS (SELECT 1 FROM channels WHERE sub = ? AND history_lease_until > ?)
     RETURNING job_id, state_json, access_token_cipher, expires_at`,
   )
-    .bind(lease, now() + 90, session.sub, body.jobId, now(), now())
+    .bind(
+      lease,
+      now() + 90,
+      session.sub,
+      body.jobId,
+      now(),
+      now(),
+      session.sub,
+      now(),
+    )
     .first<JobRow>();
   if (!acquired) {
     const current = await c.env.DB.prepare(
@@ -229,10 +249,8 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
       .bind(session.sub, now())
       .first<{ job_id: string; lease_until: number }>();
     throw new AppError(
-      current?.job_id === body.jobId && current.lease_until > now()
-        ? "SYNC_BUSY"
-        : "SYNC_EXPIRED",
-      current?.lease_until && current.lease_until > now()
+      current?.job_id === body.jobId ? "SYNC_BUSY" : "SYNC_EXPIRED",
+      current?.job_id === body.jobId
         ? "別の更新処理が実行中です。少し待って再試行してください。"
         : "同期の有効期限が切れました。更新を開始し直してください。",
       409,
@@ -269,25 +287,12 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
     const saveVideos = (videos: VideoData[]) => {
       for (const video of videos) {
         writes.push(
-          guarded(
-            `INSERT INTO videos(sub, video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, embeddable, availability, last_fetched_at)
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE $guard
-          ON CONFLICT(sub, video_id) DO UPDATE SET channel_id = excluded.channel_id, title = excluded.title, thumbnail_url = excluded.thumbnail_url,
-          published_at = excluded.published_at, duration_seconds = excluded.duration_seconds, embeddable = excluded.embeddable,
-          availability = excluded.availability, last_fetched_at = excluded.last_fetched_at`,
-            [
-              session.sub,
-              video.id,
-              video.channelId,
-              video.title,
-              video.thumbnailUrl,
-              video.publishedAt,
-              video.durationSeconds,
-              Number(video.embeddable),
-              video.availability,
-              now(),
-            ],
-          ),
+          videoStatement(c.env.DB, session.sub, video, now(), guard, [
+            session.sub,
+            acquired.job_id,
+            lease,
+            now(),
+          ]),
         );
       }
       state.videosUpdated += videos.length;
@@ -369,10 +374,14 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
       const id = state.channelIds[state.channelIndex];
       const channel = id
         ? await c.env.DB.prepare(
-            "SELECT title, uploads_playlist_id FROM channels WHERE sub = ? AND channel_id = ?",
+            "SELECT title, uploads_playlist_id, video_watermark FROM channels WHERE sub = ? AND channel_id = ?",
           )
             .bind(session.sub, id)
-            .first<{ title: string; uploads_playlist_id: string }>()
+            .first<{
+              title: string;
+              uploads_playlist_id: string;
+              video_watermark: number | null;
+            }>()
         : null;
       let finishedChannel = true;
       try {
@@ -381,7 +390,16 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
             channel.uploads_playlist_id,
             state.pageToken,
           );
-          const cutoff = state.freshIds.includes(id) ? 0 : state.cutoff;
+          const cutoff =
+            state.full || state.freshIds.includes(id)
+              ? 0
+              : channel.video_watermark
+                ? Math.max(
+                    0,
+                    channel.video_watermark -
+                      boundedInteger(c.env.SYNC_OVERLAP_SECONDS, 600, 86400),
+                  )
+                : state.cutoff;
           const recent = selectRecentUploads(page.items, cutoff);
           saveVideos(
             (await api.videos(recent.ids)).filter(
@@ -389,6 +407,21 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
             ),
           );
           state.uploadPage += 1;
+          if (cutoff === 0) {
+            writes.push(
+              guarded(
+                `UPDATE channels SET history_page_token = ?, history_complete = ?, history_started_at = ?, ${rangeAssignments}
+              WHERE sub = ? AND channel_id = ? AND $guard`,
+                [
+                  page.nextPageToken,
+                  Number(!page.nextPageToken),
+                  state.startedAt,
+                  session.sub,
+                  id,
+                ],
+              ),
+            );
+          }
           if (
             page.nextPageToken &&
             !recent.reachedCutoff &&
@@ -415,6 +448,7 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
             "YOUTUBE_UNAVAILABLE",
             "YOUTUBE_RESPONSE",
             "YOUTUBE_PAGING",
+            "YOUTUBE_PAGE_EXPIRED",
           ].includes(error.code)
         )
           throw error;
@@ -424,8 +458,22 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
           code: error.code,
           message: error.message,
         });
+        if (state.full && state.issues.length === 1)
+          writes.push(
+            guarded(
+              "UPDATE accounts SET warning_revision = ? WHERE sub = ? AND $guard",
+              [acquired.job_id, session.sub],
+            ),
+          );
       }
       if (finishedChannel) {
+        if (id && !state.issues.some((issue) => issue.channelId === id))
+          writes.push(
+            guarded(
+              `UPDATE channels SET video_watermark = ?, ${rangeAssignments} WHERE sub = ? AND channel_id = ? AND $guard`,
+              [state.startedAt, session.sub, id],
+            ),
+          );
         state.channelIndex += 1;
         state.pageToken = "";
         state.uploadPage = 0;
@@ -433,12 +481,14 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
       if (state.channelIndex >= state.channelIds.length)
         state.phase = "refresh";
     } else if (state.phase === "refresh") {
-      // 差分取得で触れなかった既存動画も、30日を超える前に情報を再確認する。
-      const stale = await c.env.DB.prepare(
-        "SELECT video_id FROM videos WHERE sub = ? AND last_fetched_at < ? ORDER BY video_id LIMIT 50",
-      )
-        .bind(session.sub, state.startedAt - 27 * 86400)
-        .all<{ video_id: string }>();
+      // 過去分再取得では古い情報も再確認する。通常更新は新着だけにし、期限切れ分は日次削除する。
+      const stale = state.full
+        ? await c.env.DB.prepare(
+            "SELECT video_id FROM videos WHERE sub = ? AND last_fetched_at < ? ORDER BY video_id LIMIT 50",
+          )
+            .bind(session.sub, state.startedAt - 27 * 86400)
+            .all<{ video_id: string }>()
+        : { results: [] };
       const ids = stale.results.map((video) => video.video_id);
       const refreshed = await api.videos(ids);
       saveVideos(refreshed);
@@ -497,6 +547,19 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
 // Google側の一時障害時でも、認証済みの所有者にはD1の取得済み情報を返す。
 export async function getCatalog(c: WorkerContext): Promise<Response> {
   const session = await requireSession(c);
+  const channelId = c.req.query("channelId") ?? "all";
+  requireCondition(
+    channelId === "all" || /^UC[\w-]{22}$/.test(channelId),
+    "INVALID_CHANNEL",
+    "チャンネルの指定が正しくありません。",
+  );
+  const limit = boundedInteger(c.req.query("limit") ?? "30", 30, 5000);
+  const seconds = Number(c.req.query("minDuration") ?? "-1");
+  requireCondition(
+    Number.isInteger(seconds) && seconds >= -1 && seconds <= 3600,
+    "INVALID_DURATION",
+    "除外時間の指定が正しくありません。",
+  );
   const cutoff = now() - maxAge;
   await c.env.DB.prepare(
     "DELETE FROM videos WHERE sub = ? AND last_fetched_at < ?",
@@ -508,21 +571,39 @@ export async function getCatalog(c: WorkerContext): Promise<Response> {
   )
     .bind(session.sub, cutoff)
     .all();
-  const limit = boundedInteger(c.env.CATALOG_LIMIT, 1000, 5000);
   const videos = await c.env.DB.prepare(
     `SELECT v.video_id AS id, v.channel_id AS channelId, v.title, v.thumbnail_url AS thumbnailUrl,
     v.published_at AS publishedAt, v.duration_seconds AS durationSeconds, v.embeddable, v.availability, c.title AS channel, c.thumbnail_url AS channelThumbnailUrl
     FROM videos v JOIN channels c ON c.sub = v.sub AND c.channel_id = v.channel_id
     WHERE v.sub = ? AND c.subscribed = 1 AND v.last_fetched_at >= ? AND c.last_synced_at >= ? AND v.availability = 'public' AND v.embeddable = 1
+    AND (? = 'all' OR v.channel_id = ?) AND v.duration_seconds > ?
     ORDER BY v.published_at DESC, v.video_id LIMIT ?`,
   )
-    .bind(session.sub, cutoff, cutoff, limit)
+    .bind(session.sub, cutoff, cutoff, channelId, channelId, seconds, limit + 1)
     .all();
   const account = await c.env.DB.prepare(
-    "SELECT last_synced_at, video_watermark FROM accounts WHERE sub = ?",
+    "SELECT last_synced_at, video_watermark, warning_revision FROM accounts WHERE sub = ?",
   )
     .bind(session.sub)
-    .first<{ last_synced_at: number | null; video_watermark: number | null }>();
+    .first<{
+      last_synced_at: number | null;
+      video_watermark: number | null;
+      warning_revision: string;
+    }>();
+  const range =
+    channelId === "all"
+      ? null
+      : await c.env.DB.prepare(
+          "SELECT newest_published_at AS newest, oldest_published_at AS oldest, history_complete AS complete, history_started_at AS startedAt FROM channels WHERE sub = ? AND channel_id = ? AND subscribed = 1",
+        )
+          .bind(session.sub, channelId)
+          .first<{
+            newest: string | null;
+            oldest: string | null;
+            complete: number;
+            startedAt: number;
+          }>();
+  const cacheHasMore = videos.results.length > limit;
   const job = await c.env.DB.prepare(
     "SELECT state_json FROM sync_jobs WHERE sub = ? AND expires_at > ?",
   )
@@ -530,10 +611,36 @@ export async function getCatalog(c: WorkerContext): Promise<Response> {
     .first<{ state_json: string }>();
   return c.json({
     channels: channels.results,
-    videos: videos.results,
+    videos: videos.results.slice(0, limit),
     lastSyncedAt: account?.last_synced_at ?? null,
     watermark: account?.video_watermark ?? null,
     limit,
     issues: job ? parseState(job.state_json).issues : [],
+    warningRevision: account?.warning_revision ?? "",
+    cacheHasMore,
+    hasMore:
+      cacheHasMore ||
+      !!(range && (!range.complete || range.startedAt < now() - 27 * 86400)),
+    range,
   });
+}
+
+// 一覧の30件に含まれない保存キューの情報も、アカウントの取得済みデータから復元する。
+export async function getSavedVideos(c: WorkerContext): Promise<Response> {
+  const session = await requireSession(c);
+  const ids = (c.req.query("ids") ?? "").split(",");
+  requireCondition(
+    ids.length <= 100 && ids.every((id) => /^[\w-]{11}$/.test(id)),
+    "INVALID_IDS",
+    "動画IDの指定が正しくありません。",
+  );
+  const result = await c.env.DB.prepare(
+    `SELECT v.video_id AS id, v.channel_id AS channelId, v.title, v.thumbnail_url AS thumbnailUrl,
+    v.published_at AS publishedAt, v.duration_seconds AS durationSeconds, c.title AS channel, c.thumbnail_url AS channelThumbnailUrl
+    FROM videos v JOIN channels c ON c.sub = v.sub AND c.channel_id = v.channel_id
+    WHERE v.sub = ? AND v.video_id IN (SELECT value FROM json_each(?)) AND v.last_fetched_at >= ? AND v.availability = 'public' AND v.embeddable = 1`,
+  )
+    .bind(session.sub, JSON.stringify(ids), now() - maxAge)
+    .all();
+  return c.json(result.results);
 }

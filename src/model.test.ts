@@ -8,9 +8,22 @@ import {
   restoreState,
   toggleQueueItem,
   isExcludedByDuration,
+  formatPublishedAt,
+  readWarningDismissal,
 } from "./model";
 
 describe("キューと保存データ", () => {
+  it("投稿日時は日付と時分を表示し、秒は省く", () => {
+    expect(formatPublishedAt("2026-10-29T12:34:56")).toBe("2026/10/29 12:34");
+    expect(formatPublishedAt("2026-10-29T00:05:59")).toBe("2026/10/29 00:05");
+  });
+  it("閉じた通知は同じ世代では保存され、過去分再取得の失敗で変わった世代では再表示できる", () => {
+    const raw = JSON.stringify({ revision: "full-job-1" });
+    expect(readWarningDismissal(raw)).toBe("full-job-1");
+    expect(readWarningDismissal(raw)).not.toBe("full-job-2");
+    expect(readWarningDismissal(null)).toBeNull();
+    expect(readWarningDismissal("broken")).toBeNull();
+  });
   it("連打しても重複追加しない", () => {
     expect(addToQueue(addToQueue([], "aqz-KE-bpKQ"), "aqz-KE-bpKQ")).toEqual([
       "aqz-KE-bpKQ",

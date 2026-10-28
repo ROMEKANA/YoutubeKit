@@ -27,7 +27,7 @@ export const storageKey = "youtubekit.prototype.v1";
 export const defaultSettings: Settings = {
   densityPercent: 100,
   initialCount: 30,
-  additionalCount: 20,
+  additionalCount: 30,
   excludeShort: true,
   shortThreshold: 180,
 };
@@ -79,7 +79,7 @@ export function restoreState(raw: string | null): SavedState {
       settings: {
         densityPercent,
         initialCount: number(settings.initialCount, 30, 100),
-        additionalCount: number(settings.additionalCount, 20, 100),
+        additionalCount: number(settings.additionalCount, 30, 100),
         excludeShort:
           typeof settings.excludeShort === "boolean"
             ? settings.excludeShort
@@ -136,6 +136,27 @@ export function formatDuration(seconds: number, total = false): string {
   }
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+export function formatPublishedAt(date: string): string {
+  return new Date(date).toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+}
+
+// 通常更新の警告が変わっても閉じた状態を維持し、過去分再取得で失敗した世代だけ再表示する。
+export function readWarningDismissal(raw: string | null): string | null {
+  try {
+    const value = JSON.parse(raw ?? "null");
+    return typeof value?.revision === "string" ? value.revision : null;
+  } catch {
+    return null;
+  }
 }
 
 // API応答への差し替えに備え、サンプルデータも読み込み時に検証する。

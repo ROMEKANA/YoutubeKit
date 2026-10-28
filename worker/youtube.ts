@@ -196,7 +196,9 @@ export class YouTubeClient {
       );
       if (reason || response.status === 404 || response.status >= 500)
         throw new AppError(
-          "YOUTUBE_ITEM_FAILED",
+          reason === "invalidPageToken"
+            ? "YOUTUBE_PAGE_EXPIRED"
+            : "YOUTUBE_ITEM_FAILED",
           `${reason ? descriptions[reason] : "対象の取得に失敗しました"}（HTTP ${response.status}${reason ? ` / ${reason}` : ""}）。`,
           502,
         );

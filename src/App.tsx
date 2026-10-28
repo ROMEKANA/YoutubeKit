@@ -10,6 +10,8 @@ import {
   toggleQueueItem,
   isExcludedByDuration,
   formatDuration,
+  formatPublishedAt,
+  readWarningDismissal,
   moveItem,
   restoreState,
   storageKey,
@@ -22,7 +24,7 @@ import { useCatalog, type CatalogController } from "./useCatalog";
 
 type Panel = "channels" | "queue" | "settings" | null;
 const thumbnail = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
-const dateLabel = (date: string) => new Date(date).toLocaleDateString("ja-JP");
+const dateLabel = formatPublishedAt;
 
 // native dialogでフォーカス移動とEscapeによる閉じる操作を提供する。
 function Modal({
@@ -116,7 +118,13 @@ export function App() {
 }
 
 // 取得できた一覧を使いながら、飛ばした対象と次の操作を確認できるようにする。
-function SyncWarnings({ catalog }: { catalog: CatalogController }) {
+function SyncWarnings({
+  catalog,
+  onDismiss,
+}: {
+  catalog: CatalogController;
+  onDismiss?: () => void;
+}) {
   return (
     <div className="notice sync-warning" role="status">
       <p>
@@ -142,6 +150,11 @@ function SyncWarnings({ catalog }: { catalog: CatalogController }) {
       >
         更新を再試行
       </button>
+      {onDismiss && (
+        <button className="text-button" onClick={onDismiss}>
+          一覧では非表示にする
+        </button>
+      )}
     </div>
   );
 }
@@ -155,6 +168,14 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
   const [initial] = useState(() => readInitialState(stateKey));
   const [saved, setSaved] = useState(initial.state);
   const [storageError, setStorageError] = useState(initial.error);
+  const warningKey = `${stateKey}.warning-dismissal`;
+  const [dismissedRevision, setDismissedRevision] = useState(() => {
+    try {
+      return readWarningDismissal(localStorage.getItem(warningKey));
+    } catch {
+      return null;
+    }
+  });
   const videos = catalog.videos;
   const loading = catalog.loading || catalog.checking;
   const loadError = catalog.error;
@@ -173,6 +194,8 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
   const dragTarget = useRef<number | null>(null);
   const settings = saved.settings;
   const knownVideos = useRef(new Map<string, Video>());
+  for (const video of catalog.queueVideos)
+    knownVideos.current.set(video.id, video);
   for (const video of videos) knownVideos.current.set(video.id, video);
   const queueVideos = saved.queue.map((id) => knownVideos.current.get(id));
   const queueSeconds = queueVideos.reduce(
@@ -212,6 +235,37 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
   useEffect(() => {
     setLimit(settings.initialCount);
   }, [channelId, showHidden, settings]);
+  useEffect(() => {
+    if (catalog.sourceKey === "locked") return;
+    catalog.selectView({
+      channelId,
+      count: limit,
+      minDuration: settings.excludeShort ? settings.shortThreshold : -1,
+      hidden: showHidden ? [] : saved.hidden,
+    });
+  }, [
+    channelId,
+    limit,
+    showHidden,
+    settings.excludeShort,
+    settings.shortThreshold,
+    saved.hidden,
+    catalog.sourceKey,
+  ]);
+
+  function dismissWarnings() {
+    try {
+      localStorage.setItem(
+        warningKey,
+        JSON.stringify({ revision: catalog.warningRevision }),
+      );
+      setDismissedRevision(catalog.warningRevision);
+    } catch {
+      setStorageError(
+        "通知の非表示設定を保存できませんでした。ブラウザの保存領域を確認してください。",
+      );
+    }
+  }
 
   function toggleQueue(video: Video) {
     setSaved((state) => ({
@@ -283,16 +337,25 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
               className={`icon-button ${loading ? "spinning" : ""}`}
               aria-label="動画一覧を更新"
               title={
-                catalog.isDemo
-                  ? "サンプル一覧を再読み込み"
-                  : "登録チャンネルと新着動画を更新"
+                catalog.refreshQueued
+                  ? "現在の処理後に新着更新を行います"
+                  : catalog.isDemo
+                    ? "サンプル一覧を再読み込み"
+                    : "登録チャンネルと新着動画を更新"
               }
-              disabled={
-                loading ||
-                !!session ||
-                (!catalog.isDemo && !catalog.auth?.authenticated)
-              }
-              onClick={() => void refresh()}
+              aria-busy={loading}
+              onClick={() => {
+                if (
+                  !catalog.auth?.authenticated &&
+                  !catalog.isDemo &&
+                  !catalog.checking
+                )
+                  setPanel("settings");
+                else {
+                  if (loading) setToast("処理後の新着更新を受け付けました");
+                  void refresh();
+                }
+              }}
             >
               <Icon name="refresh" />
             </button>
@@ -303,7 +366,7 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
               disabled={!!session}
               onClick={() => setShowHidden(!showHidden)}
             >
-              <Icon name="eye" />
+              <Icon name={showHidden ? "eye" : "eye-off"} />
             </button>
             <button
               className="icon-button"
@@ -360,7 +423,6 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
                     <p className="eyebrow">VIDEO LIBRARY</p>
                     <h1>{currentChannel}</h1>
                   </div>
-                  <span className="count-label">{visible.length} 本</span>
                 </div>
                 <div className="list-meta">
                   <span>
@@ -394,8 +456,17 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
                     {catalog.progress}
                   </p>
                 )}
-                {catalog.issues.length > 0 && (
-                  <SyncWarnings catalog={catalog} />
+                {catalog.issues.length > 0 &&
+                  dismissedRevision !== catalog.warningRevision && (
+                    <SyncWarnings
+                      catalog={catalog}
+                      onDismiss={dismissWarnings}
+                    />
+                  )}
+                {catalog.refreshQueued && (
+                  <p className="sync-progress" role="status">
+                    処理後に新着更新を行います。
+                  </p>
                 )}
                 {!catalog.isDemo &&
                   !catalog.auth?.authenticated &&
@@ -501,14 +572,15 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
                     </p>
                   </div>
                 )}
-                {visible.length > limit ? (
+                {visible.length > limit || catalog.hasMore ? (
                   <button
                     className="load-more secondary"
+                    disabled={loading}
                     onClick={() =>
                       setLimit((value) => value + settings.additionalCount)
                     }
                   >
-                    さらに表示（残り {visible.length - limit} 本）
+                    さらに表示
                   </button>
                 ) : (
                   !loading &&

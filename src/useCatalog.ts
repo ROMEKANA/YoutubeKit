@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { parseVideos, type Video } from "./model";
+import { parseVideos, restoreState, type Video } from "./model";
 import { parseSyncIssues, type SyncIssue } from "../shared/sync";
 
 export interface Channel {
@@ -22,6 +22,15 @@ interface Catalog {
   lastSyncedAt: number | null;
   watermark: number | null;
   issues: SyncIssue[];
+  warningRevision: string;
+  hasMore: boolean;
+  cacheHasMore: boolean;
+}
+export interface CatalogView {
+  channelId: string;
+  count: number;
+  minDuration: number;
+  hidden: string[];
 }
 interface Progress {
   jobId: string;
@@ -37,6 +46,9 @@ const emptyCatalog: Catalog = {
   lastSyncedAt: null,
   watermark: null,
   issues: [],
+  warningRevision: "",
+  hasMore: false,
+  cacheHasMore: false,
 };
 
 export class ApiError extends Error {
@@ -133,6 +145,10 @@ function parseCatalog(value: unknown): Catalog {
       typeof data.lastSyncedAt === "number" ? data.lastSyncedAt : null,
     watermark: typeof data.watermark === "number" ? data.watermark : null,
     issues: parseSyncIssues(data.issues),
+    warningRevision:
+      typeof data.warningRevision === "string" ? data.warningRevision : "",
+    hasMore: data.hasMore === true,
+    cacheHasMore: data.cacheHasMore === true,
   };
 }
 
@@ -170,8 +186,19 @@ export function useCatalog() {
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
   const [backendOffline, setBackendOffline] = useState(false);
+  const [queueVideos, setQueueVideos] = useState<Video[]>([]);
+  const [refreshQueued, setRefreshQueued] = useState(false);
+  const authRef = useRef<ServerStatus | null>(null);
   const busy = useRef(false);
   const controller = useRef<AbortController | null>(null);
+  const pendingRefresh = useRef<boolean | null>(null);
+  const pendingView = useRef(false);
+  const view = useRef<CatalogView>({
+    channelId: "all",
+    count: 30,
+    minDuration: -1,
+    hidden: [],
+  });
   const isDemo =
     !!auth && !auth.authenticated && auth.allowDemo && !auth.configured;
   const sourceKey =
@@ -181,10 +208,62 @@ export function useCatalog() {
         ? "prototype"
         : "locked";
 
-  async function readCatalog(status: ServerStatus, signal: AbortSignal) {
+  async function readCatalog(
+    status: ServerStatus,
+    signal: AbortSignal,
+    allowHistory = true,
+  ) {
     if (status.authenticated) {
-      const next = parseCatalog(await request("/api/catalog", {}, signal));
-      setCatalog(next);
+      const selectedView = view.current;
+      let rawLimit = Math.min(
+        5000,
+        selectedView.count + selectedView.hidden.length,
+      );
+      let next: Catalog;
+      let historyPages = 0;
+      while (true) {
+        const query = new URLSearchParams({
+          channelId: selectedView.channelId,
+          limit: String(rawLimit),
+          minDuration: String(selectedView.minDuration),
+        });
+        next = parseCatalog(await request(`/api/catalog?${query}`, {}, signal));
+        const visibleCount = next.videos.filter(
+          (video) => !selectedView.hidden.includes(video.id),
+        ).length;
+        if (visibleCount >= selectedView.count || view.current !== selectedView)
+          break;
+        if (next.cacheHasMore && rawLimit < 5000) {
+          rawLimit = Math.min(5000, rawLimit + 30);
+          continue;
+        }
+        if (
+          !allowHistory ||
+          selectedView.channelId === "all" ||
+          !next.hasMore ||
+          historyPages >= 6
+        )
+          break;
+        setProgress("選択したチャンネルの過去分を取得中");
+        await request(
+          "/api/channel/history",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": status.csrfToken!,
+            },
+            body: JSON.stringify({ channelId: selectedView.channelId }),
+          },
+          signal,
+        );
+        historyPages += 1;
+      }
+      if (view.current === selectedView) {
+        if (allowHistory) pendingView.current = false;
+        if (rawLimit >= 5000 && next.cacheHasMore) next.hasMore = false;
+        setCatalog(next);
+      }
       // 更新完了後にサーバーが確定した「開始日時」だけを端末にも控える。
       try {
         localStorage.setItem(
@@ -215,8 +294,68 @@ export function useCatalog() {
         watermark: null,
         lastSyncedAt: null,
         issues: [],
+        warningRevision: "",
+        hasMore: false,
+        cacheHasMore: false,
       });
     } else setCatalog(emptyCatalog);
+  }
+
+  // 更新の連打は1回分にまとめ、表示先の変更も最新の要求だけ処理する。
+  function finishOperation() {
+    busy.current = false;
+    if (controller.current?.signal.aborted) return;
+    if (pendingRefresh.current !== null) {
+      const full = pendingRefresh.current;
+      pendingRefresh.current = null;
+      setRefreshQueued(false);
+      void refresh(full);
+    } else if (pendingView.current) {
+      pendingView.current = false;
+      void loadView();
+    }
+  }
+
+  async function loadView() {
+    if (busy.current) {
+      pendingView.current = true;
+      return;
+    }
+    const status = authRef.current;
+    if (!status) return;
+    busy.current = true;
+    const nextController = new AbortController();
+    controller.current = nextController;
+    setLoading(true);
+    setError("");
+    try {
+      await readCatalog(status, nextController.signal);
+    } catch (reason) {
+      if (!nextController.signal.aborted)
+        setError(
+          reason instanceof Error
+            ? reason.message
+            : "動画を取得できませんでした。",
+        );
+      // 過去分の取得失敗でも、今回DBから取得できた動画は表示する。
+      if (!nextController.signal.aborted) {
+        try {
+          await readCatalog(status, nextController.signal, false);
+        } catch {
+          /* 最初のエラーを維持する。 */
+        }
+      }
+    } finally {
+      setLoading(false);
+      setProgress("");
+      finishOperation();
+    }
+  }
+
+  function selectView(next: CatalogView) {
+    if (JSON.stringify(view.current) === JSON.stringify(next)) return;
+    view.current = next;
+    void loadView();
   }
 
   async function checkConnection() {
@@ -253,6 +392,29 @@ export function useCatalog() {
         setBackendOffline(true);
       }
       setAuth(status);
+      authRef.current = status;
+      if (status.authenticated && status.account) {
+        let ids: string[] = [];
+        try {
+          ids = restoreState(
+            localStorage.getItem(`youtubekit.account.${status.account.sub}.v1`),
+          ).queue;
+        } catch {
+          /* 保存不可のブラウザでも一覧は使用できる。 */
+        }
+        const restored: Video[] = [];
+        for (let index = 0; index < ids.length; index += 100)
+          restored.push(
+            ...parseVideos(
+              await request(
+                `/api/saved-videos?ids=${ids.slice(index, index + 100).join(",")}`,
+                {},
+                nextController.signal,
+              ),
+            ),
+          );
+        setQueueVideos(restored);
+      }
       await readCatalog(status, nextController.signal);
       if (
         new URLSearchParams(window.location.search).get("auth_error") ===
@@ -267,8 +429,8 @@ export function useCatalog() {
           reason instanceof Error ? reason.message : "通信に失敗しました。",
         );
     } finally {
-      busy.current = false;
       setChecking(false);
+      finishOperation();
     }
   }
 
@@ -278,7 +440,16 @@ export function useCatalog() {
   }, []);
 
   async function refresh(full = false) {
-    if (busy.current || !auth) return;
+    if (busy.current) {
+      pendingRefresh.current = pendingRefresh.current === true || full;
+      setRefreshQueued(true);
+      return;
+    }
+    const auth = authRef.current;
+    if (!auth) {
+      void checkConnection();
+      return;
+    }
     busy.current = true;
     const nextController = new AbortController();
     controller.current = nextController;
@@ -316,12 +487,12 @@ export function useCatalog() {
         }
       }
       if (!nextController.signal.aborted)
-        await readCatalog(auth, nextController.signal);
+        await readCatalog(auth, nextController.signal, full);
     } catch (reason) {
       // 全体が中断した場合も、その時点までに保存できた動画を一覧へ反映する。
       if (auth.authenticated && !nextController.signal.aborted) {
         try {
-          await readCatalog(auth, nextController.signal);
+          await readCatalog(auth, nextController.signal, false);
         } catch {
           /* 最初の失敗理由を優先して表示する。 */
         }
@@ -336,17 +507,20 @@ export function useCatalog() {
         reason instanceof ApiError &&
         ["RECONNECT_REQUIRED", "LOGIN_REQUIRED"].includes(reason.code)
       )
-        setAuth((status) =>
-          status ? { ...status, connected: false } : status,
-        );
+        setAuth((status) => {
+          const next = status ? { ...status, connected: false } : status;
+          authRef.current = next;
+          return next;
+        });
     } finally {
-      busy.current = false;
       setLoading(false);
       setProgress("");
+      finishOperation();
     }
   }
 
   async function endConnection(removeData = false) {
+    const auth = authRef.current;
     if (busy.current || !auth?.authenticated) return;
     busy.current = true;
     setLoading(true);
@@ -357,13 +531,19 @@ export function useCatalog() {
         { method: "POST", headers: { "X-CSRF-Token": auth.csrfToken! } },
       );
       setCatalog(emptyCatalog);
-      setAuth({
+      setQueueVideos([]);
+      const next = {
         ...auth,
         authenticated: false,
         account: undefined,
         csrfToken: undefined,
         connected: false,
-      });
+      };
+      setAuth(next);
+      authRef.current = next;
+      pendingRefresh.current = null;
+      pendingView.current = false;
+      setRefreshQueued(false);
       if (
         removeData &&
         result &&
@@ -379,8 +559,8 @@ export function useCatalog() {
         reason instanceof Error ? reason.message : "接続の終了に失敗しました。",
       );
     } finally {
-      busy.current = false;
       setLoading(false);
+      finishOperation();
     }
   }
 
@@ -394,6 +574,9 @@ export function useCatalog() {
     isDemo,
     sourceKey,
     backendOffline,
+    queueVideos,
+    refreshQueued,
+    selectView,
     refresh,
     checkConnection,
     endConnection,

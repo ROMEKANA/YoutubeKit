@@ -9,7 +9,8 @@ import {
 } from "./auth";
 import { missingConfiguration } from "./config";
 import { AppError } from "./errors";
-import { getCatalog, startSync, stepSync } from "./sync";
+import { getCatalog, getSavedVideos, startSync, stepSync } from "./sync";
+import { loadHistory } from "./history";
 import { cleanup } from "./cleanup";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -60,6 +61,8 @@ app.get("/auth/callback", finishLogin);
 app.post("/api/logout", logout);
 app.post("/api/disconnect", disconnect);
 app.get("/api/catalog", getCatalog);
+app.get("/api/saved-videos", getSavedVideos);
+app.post("/api/channel/history", loadHistory);
 app.post("/api/sync/start", startSync);
 app.post("/api/sync/step", stepSync);
 app.all("/api/*", (c) =>

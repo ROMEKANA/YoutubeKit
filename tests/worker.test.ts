@@ -197,7 +197,6 @@ function options(script: string): MiniflareOptions {
     ALLOW_DEMO: "false",
     UPLOAD_PAGES_PER_CHANNEL: "2",
     SYNC_OVERLAP_SECONDS: "600",
-    CATALOG_LIMIT: "1000",
   };
   return {
     cf: false,
@@ -335,7 +334,10 @@ beforeAll(async () => {
     options(await readFile(".wrangler/test/worker.mjs", "utf8")),
   );
   db = await mf.getD1Database("DB");
-  const schema = await readFile("migrations/0001_accounts_catalog.sql", "utf8");
+  const schema =
+    (await readFile("migrations/0001_accounts_catalog.sql", "utf8")) +
+    "\n" +
+    (await readFile("migrations/0002_channel_ranges.sql", "utf8"));
   // D1のexecは行単位で実行するため、CREATE文を一文ずつ渡す。
   for (const sql of schema
     .replace(/^--.*$/gm, "")
@@ -460,6 +462,293 @@ describe("認証とAPIアクセス（Workers + 実D1バインディング）", (
       /test-access|test-refresh|test-client-secret|refresh_token_cipher/,
     );
     expect(response.headers.get("Cache-Control")).toBe("no-store");
+  });
+});
+
+describe("チャンネル別の表示範囲と履歴", () => {
+  it("履歴取得と保存キュー取得も認証・CSRF・入力を検証する", async () => {
+    expect(
+      (await post("/api/channel/history", { channelId: channelA })).status,
+    ).toBe(401);
+    expect(
+      (await mf.dispatchFetch(`${origin}/api/saved-videos?ids=${videoIds[0]}`))
+        .status,
+    ).toBe(401);
+    await authenticated();
+    await runSync();
+    expect(
+      (
+        await post(
+          "/api/channel/history",
+          { channelId: channelA },
+          { "X-CSRF-Token": "wrong" },
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (await post("/api/channel/history", { channelId: "invalid" })).status,
+    ).toBe(400);
+    expect(
+      (
+        await mf.dispatchFetch(`${origin}/api/catalog?channelId=invalid`, {
+          headers: { Cookie: sessionCookie },
+        })
+      ).status,
+    ).toBe(400);
+  });
+  it("履歴ページの取得失敗ではカーソルと保存済み動画を進めず、再試行できる", async () => {
+    await authenticated();
+    extraUploadPage = true;
+    await runSync();
+    uploadFailure = {
+      playlist: "uploads-A",
+      status: 500,
+      reason: "backendError",
+      page: "uploads-3",
+    };
+    expect(
+      (await post("/api/channel/history", { channelId: channelA })).status,
+    ).toBe(502);
+    expect(
+      await db
+        .prepare("SELECT history_page_token FROM channels WHERE channel_id = ?")
+        .bind(channelA)
+        .first("history_page_token"),
+    ).toBe("uploads-3");
+    expect(
+      await db
+        .prepare(
+          "SELECT history_lease_token FROM channels WHERE channel_id = ?",
+        )
+        .bind(channelA)
+        .first("history_lease_token"),
+    ).toBeNull();
+    uploadFailure = null;
+    expect(
+      (await post("/api/channel/history", { channelId: channelA })).status,
+    ).toBe(200);
+  });
+  it("中断中の過去分再取得と通常更新は、明示されたモードへ安全に切り替える", async () => {
+    await authenticated();
+    const normal = await (
+      await post("/api/sync/start", {})
+    ).json<{ jobId: string }>();
+    const full = await (
+      await post("/api/sync/start", { full: true })
+    ).json<{ jobId: string }>();
+    expect(full.jobId).not.toBe(normal.jobId);
+    expect(
+      JSON.parse(
+        (await db
+          .prepare("SELECT state_json FROM sync_jobs")
+          .first("state_json")) as string,
+      ).full,
+    ).toBe(true);
+    const latest = await (
+      await post("/api/sync/start", {})
+    ).json<{ jobId: string }>();
+    expect(latest.jobId).not.toBe(full.jobId);
+    expect(
+      JSON.parse(
+        (await db
+          .prepare("SELECT state_json FROM sync_jobs")
+          .first("state_json")) as string,
+      ).full,
+    ).toBe(false);
+  });
+  it("全体は最新30件、月1投稿のチャンネルもそのチャンネルだけの最新30件を返す", async () => {
+    await authenticated();
+    await runSync();
+    await db
+      .prepare(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<1100)
+      INSERT INTO videos(sub,video_id,channel_id,title,thumbnail_url,published_at,duration_seconds,embeddable,availability,last_fetched_at)
+      SELECT ?,printf('%011d',70000000000+i),?,'高頻度動画','',strftime('%Y-%m-%dT%H:%M:%SZ','now','-'||i||' minutes'),200,1,'public',? FROM n`,
+      )
+      .bind(sub, channelA, seconds())
+      .run();
+    await db
+      .prepare(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<35)
+      INSERT INTO videos(sub,video_id,channel_id,title,thumbnail_url,published_at,duration_seconds,embeddable,availability,last_fetched_at)
+      SELECT ?,printf('%011d',80000000000+i),?,'月1動画','',strftime('%Y-%m-%dT%H:%M:%SZ','now','-'||(i*30)||' days'),200,1,'public',? FROM n`,
+      )
+      .bind(sub, channelB, seconds())
+      .run();
+    const get = async (query: string) =>
+      (
+        await mf.dispatchFetch(`${origin}/api/catalog${query}`, {
+          headers: { Cookie: sessionCookie },
+        })
+      ).json<{
+        videos: { id: string; channelId: string }[];
+        hasMore: boolean;
+        cacheHasMore: boolean;
+      }>();
+    const all = await get("");
+    expect(all.videos).toHaveLength(30);
+    expect(all.videos.every((video) => video.channelId === channelA)).toBe(
+      true,
+    );
+    const channel = await get(
+      `?channelId=${channelB}&limit=30&minDuration=180`,
+    );
+    expect(channel.videos).toHaveLength(30);
+    expect(channel.videos.every((video) => video.channelId === channelB)).toBe(
+      true,
+    );
+    expect(channel.cacheHasMore).toBe(true);
+    const more = await get(`?channelId=${channelB}&limit=60`);
+    expect(more.videos).toHaveLength(35);
+    expect(more.hasMore).toBe(false);
+    const saved = await mf.dispatchFetch(
+      `${origin}/api/saved-videos?ids=80000000035`,
+      { headers: { Cookie: sessionCookie } },
+    );
+    expect(await saved.json()).toHaveLength(1);
+  });
+  it("チャンネルごとに取得範囲の両端と過去分の続きを保存し、さらに表示で続きだけ取得する", async () => {
+    await authenticated();
+    extraUploadPage = true;
+    await runSync();
+    const range = await db
+      .prepare(
+        "SELECT newest_published_at, oldest_published_at, history_page_token, history_complete FROM channels WHERE channel_id = ?",
+      )
+      .bind(channelA)
+      .first<{
+        newest_published_at: string;
+        oldest_published_at: string;
+        history_page_token: string;
+        history_complete: number;
+      }>();
+    expect(Date.parse(range!.newest_published_at)).toBeGreaterThan(
+      Date.parse(range!.oldest_published_at),
+    );
+    expect(range!.history_page_token).toBe("uploads-3");
+    expect(range!.history_complete).toBe(0);
+    seen = [];
+    expect(
+      (await post("/api/channel/history", { channelId: channelA })).status,
+    ).toBe(200);
+    expect(seen.some((url) => url.includes("pageToken=uploads-3"))).toBe(true);
+    expect(
+      await db
+        .prepare("SELECT history_complete FROM channels WHERE channel_id = ?")
+        .bind(channelA)
+        .first("history_complete"),
+    ).toBe(1);
+    seen = [];
+    expect(
+      (await post("/api/channel/history", { channelId: channelA })).status,
+    ).toBe(200);
+    expect(seen).toEqual([]);
+  });
+  it("古い取得カーソルやAPIの無効ページ情報は先頭から再確認できる", async () => {
+    await authenticated();
+    extraUploadPage = true;
+    await runSync();
+    uploadFailure = {
+      playlist: "uploads-A",
+      status: 400,
+      reason: "invalidPageToken",
+      page: "uploads-3",
+    };
+    const reset = await post("/api/channel/history", { channelId: channelA });
+    expect(await reset.json()).toMatchObject({ reset: true });
+    uploadFailure = null;
+    seen = [];
+    expect(
+      (await post("/api/channel/history", { channelId: channelA })).status,
+    ).toBe(200);
+    expect(seen.some((url) => url.includes("pageToken="))).toBe(false);
+    await db
+      .prepare(
+        "UPDATE channels SET history_started_at = ? WHERE channel_id = ?",
+      )
+      .bind(seconds() - 28 * 86400, channelA)
+      .run();
+    seen = [];
+    expect(
+      (await post("/api/channel/history", { channelId: channelA })).status,
+    ).toBe(200);
+    expect(seen.some((url) => url.includes("pageToken="))).toBe(false);
+  });
+  it("全体更新と履歴取得のリースが競合した場合はデータを二重更新しない", async () => {
+    await authenticated();
+    await runSync();
+    await db
+      .prepare("UPDATE sync_jobs SET lease_until = ?")
+      .bind(seconds() + 60)
+      .run();
+    expect(
+      (await post("/api/channel/history", { channelId: channelA })).status,
+    ).toBe(409);
+    await db.prepare("UPDATE sync_jobs SET lease_until = 0").run();
+    const started = await post("/api/sync/start", {});
+    const state = await started.json<{ jobId: string }>();
+    await db
+      .prepare(
+        "UPDATE channels SET history_lease_until = ? WHERE channel_id = ?",
+      )
+      .bind(seconds() + 60, channelA)
+      .run();
+    expect((await post("/api/sync/step", state)).status).toBe(409);
+  });
+  it("通常更新の失敗では通知の世代を変えず、過去分再取得の再失敗でだけ世代を変える", async () => {
+    await authenticated();
+    uploadFailure = {
+      playlist: "uploads-B",
+      status: 404,
+      reason: "playlistNotFound",
+    };
+    await runSync();
+    expect(
+      await db
+        .prepare("SELECT warning_revision FROM accounts")
+        .first("warning_revision"),
+    ).toBe("");
+    await runSync(true);
+    const first = await db
+      .prepare("SELECT warning_revision FROM accounts")
+      .first("warning_revision");
+    expect(first).not.toBe("");
+    await runSync();
+    expect(
+      await db
+        .prepare("SELECT warning_revision FROM accounts")
+        .first("warning_revision"),
+    ).toBe(first);
+    await runSync(true);
+    expect(
+      await db
+        .prepare("SELECT warning_revision FROM accounts")
+        .first("warning_revision"),
+    ).not.toBe(first);
+  });
+  it("一部失敗しても成功したチャンネルの基準日時を使い、次回に過去分を繰り返し取得しない", async () => {
+    await authenticated();
+    uploadFailure = {
+      playlist: "uploads-B",
+      status: 404,
+      reason: "playlistNotFound",
+    };
+    await runSync();
+    expect(
+      await db
+        .prepare("SELECT video_watermark FROM channels WHERE channel_id = ?")
+        .bind(channelA)
+        .first("video_watermark"),
+    ).toBeGreaterThan(0);
+    expect(
+      await db
+        .prepare("SELECT video_watermark FROM channels WHERE channel_id = ?")
+        .bind(channelB)
+        .first("video_watermark"),
+    ).toBeNull();
+    seen = [];
+    await runSync();
+    expect(seen.some((url) => url.includes("pageToken=uploads-2"))).toBe(false);
   });
 });
 
@@ -643,6 +932,10 @@ describe("チャンネル同期と日時による差分取得", () => {
     await runSync();
     await db
       .prepare("UPDATE accounts SET video_watermark = ?")
+      .bind(seconds() - 20 * 86400)
+      .run();
+    await db
+      .prepare("UPDATE channels SET video_watermark = ?")
       .bind(seconds() - 20 * 86400)
       .run();
     uploadFailure = {
