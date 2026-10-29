@@ -930,6 +930,7 @@ small {
   padding: 0;
 }
 .queue-items li {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -938,9 +939,27 @@ small {
   transition: background 0.15s;
 }
 .queue-items li.dragging {
-  background: #e9efdf;
-  outline: 1px dashed #8da078;
+  background: #edf4ff;
+  outline: 2px solid #2f6fca;
   border-radius: 8px;
+}
+.queue-items li.drop-before::before,
+.queue-items li.drop-after::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 999px;
+  background: #27864a;
+  pointer-events: none;
+}
+.queue-items li.drop-before::before {
+  top: -2px;
+}
+.queue-items li.drop-after::after {
+  bottom: -2px;
 }
 .drag-handle {
   width: 25px;

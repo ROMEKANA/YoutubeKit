@@ -202,6 +202,7 @@ function CatalogApp({
   const playerHandle = useRef<PlayerHandle>(null);
   const theaterButton = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  const [dragTargetIndex, setDragTargetIndex] = useState<number | null>(null);
   const dragOrigin = useRef<number | null>(null);
   const dragTarget = useRef<number | null>(null);
   const settings = saved.settings;
@@ -882,11 +883,19 @@ function CatalogApp({
           <ol className="queue-items">
             {saved.queue.map((id, index) => {
               const video = queueVideos[index];
+              const dropPosition =
+                dragging && dragTargetIndex === index
+                  ? index <= (dragOrigin.current ?? index)
+                    ? "drop-before"
+                    : "drop-after"
+                  : "";
               return (
                 <li
                   key={id}
                   data-queue-index={index}
-                  className={dragging === id ? "dragging" : ""}
+                  className={
+                    `${dragging === id ? "dragging" : ""} ${dropPosition}`.trim()
+                  }
                 >
                   <button
                     className="drag-handle icon-button"
@@ -895,6 +904,7 @@ function CatalogApp({
                       dragOrigin.current = index;
                       dragTarget.current = index;
                       setDragging(id);
+                      setDragTargetIndex(index);
                       event.currentTarget.setPointerCapture(event.pointerId);
                     }}
                     onPointerMove={(event) => {
@@ -902,8 +912,11 @@ function CatalogApp({
                       const row = document
                         .elementFromPoint(event.clientX, event.clientY)
                         ?.closest<HTMLElement>("[data-queue-index]");
-                      if (row)
-                        dragTarget.current = Number(row.dataset.queueIndex);
+                      if (row) {
+                        const target = Number(row.dataset.queueIndex);
+                        dragTarget.current = target;
+                        setDragTargetIndex(target);
+                      }
                     }}
                     onPointerUp={() => {
                       if (
@@ -914,11 +927,13 @@ function CatalogApp({
                       dragOrigin.current = null;
                       dragTarget.current = null;
                       setDragging(null);
+                      setDragTargetIndex(null);
                     }}
                     onPointerCancel={() => {
                       dragOrigin.current = null;
                       dragTarget.current = null;
                       setDragging(null);
+                      setDragTargetIndex(null);
                     }}
                   >
                     <Icon name="grip" size={18} />

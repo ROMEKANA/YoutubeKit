@@ -57,19 +57,28 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
     let instance: YT.Player | undefined;
     let readyTimer: number | undefined;
     let playerReady = false;
+    let startPending = true;
     tracker.current = new PlaylistTracker(videos.length);
     setReady(false);
     setComplete(false);
     setError("");
     setIndex(0);
     setStatus("YouTubeプレーヤーを読み込んでいます…");
-    const pauseWhenHidden = () => {
+    const handleVisibilityChange = () => {
       if (document.hidden && playerReady) {
         instance?.pauseVideo?.();
         setStatus("画面に戻ったら「再開」を押してください。");
+      } else if (
+        playerReady &&
+        startPending &&
+        instance?.getPlayerState() === 5
+      ) {
+        startPending = false;
+        setStatus("先頭の動画を再生します…");
+        instance.playVideoAt(0);
       }
     };
-    document.addEventListener("visibilitychange", pauseWhenHidden);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     loadYouTubeApi()
       .then((api) => {
@@ -102,21 +111,20 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
                 "再生を開始します。始まらない場合は「再開」を押してください。",
               );
               event.target.setLoop(false);
-              if (document.hidden)
-                event.target.cuePlaylist(
-                  videos.map((video) => video.id),
-                  0,
-                  0,
-                );
-              else
-                event.target.loadPlaylist(
-                  videos.map((video) => video.id),
-                  0,
-                  0,
-                );
+              event.target.cuePlaylist(
+                videos.map((video) => video.id),
+                0,
+                0,
+              );
             },
             onStateChange: (event) => {
               if (disposed) return;
+              if (event.data === 5 && startPending && !document.hidden) {
+                startPending = false;
+                setStatus("先頭の動画を再生します…");
+                event.target.playVideoAt(0);
+                return;
+              }
               const current = event.target.getPlaylistIndex();
               const action = tracker.current.observe(event.data, current);
               if (action === "playing") {
@@ -169,7 +177,7 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
     return () => {
       disposed = true;
       window.clearTimeout(readyTimer);
-      document.removeEventListener("visibilitychange", pauseWhenHidden);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       instance?.destroy();
       player.current = null;
     };

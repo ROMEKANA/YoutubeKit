@@ -183,7 +183,7 @@ YouTube Premiumの契約状態を、独自PWA内でPremium固有機能を利用�
 
 - 動画一覧のサムネイル、または右端の追加・番号ボタンからワンタップで追加・削除を切り替える。
 - 同じ動画IDの重複登録を防止する。
-- ドラッグ操作で順序を変更する。
+- ドラッグ操作で順序を変更する。ドラッグ中の動画を青枠で、移動予定位置を緑線で表示する。
 - 個別削除と全削除を行う。
 - 動画本数と合計再生時間を表示する。
 - サーバーへ保存し、再起動時に復元する。
@@ -200,7 +200,8 @@ iPhoneとiPad間で状態が競合した場合は、サーバー上の状態を�
 - 専用再生画面を設け、YouTube公式プレーヤーを1つだけ表示する。
 - 一覧へ複数の埋め込みプレーヤーを並べない。
 - 再生開始操作後、キューの動画ID配列を指定順でプレーヤーへ渡す。
-- YouTube IFrame Player APIの `cuePlaylist()`、`loadPlaylist()`、`getPlaylistIndex()`、`nextVideo()`、`setLoop(false)`、`onStateChange`、`onAutoplayBlocked` を調査対象とする。
+- YouTube IFrame Player APIの `cuePlaylist()`、`loadPlaylist()`、`playVideoAt()`、`getPlaylistIndex()`、`nextVideo()`、`setLoop(false)`、`onStateChange`、`onAutoplayBlocked` を調査対象とする。
+- 再生開始ではキューを `cuePlaylist()` で準備し、準備完了後に `playVideoAt(0)` で先頭の動画の再生を試みる。ブラウザに自動再生を拒否された場合は再開操作を表示する。
 - キュー順以外の動画へアプリ側から移動しない。
 - 再生画面のキュー一覧を押すと、選んだ位置の動画を先頭から再生する。最終動画の終了後も、利用者が明示的に選んだ場合は新しい再生として開始する。
 - 最終動画終了後は停止し、ループや追加の自動再生を行わない。
