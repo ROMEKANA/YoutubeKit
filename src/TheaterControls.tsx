@@ -26,6 +26,39 @@ export function TheaterControls({
   );
   const pad = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    // メタタグに加え、背景色を参照するSafari向けにも黒を指定する。
+    const originals = [
+      ["theme-color", "#000000"],
+      ["apple-mobile-web-app-status-bar-style", "black"],
+    ].map(([name, color]) => {
+      const meta = document.querySelector<HTMLMetaElement>(
+        `meta[name="${name}"]`,
+      );
+      const content = meta?.getAttribute("content") ?? null;
+      meta?.setAttribute("content", color);
+      return { meta, content };
+    });
+    const backgrounds = [document.documentElement, document.body].map(
+      (element) => {
+        const value = element.style.getPropertyValue("background-color");
+        const priority = element.style.getPropertyPriority("background-color");
+        element.style.setProperty("background-color", "#000000");
+        return { element, value, priority };
+      },
+    );
+    return () => {
+      for (const { meta, content } of originals) {
+        if (content === null) meta?.removeAttribute("content");
+        else meta?.setAttribute("content", content);
+      }
+      for (const { element, value, priority } of backgrounds) {
+        if (value)
+          element.style.setProperty("background-color", value, priority);
+        else element.style.removeProperty("background-color");
+      }
+    };
+  }, []);
+  useEffect(() => {
     pad.current?.focus();
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
