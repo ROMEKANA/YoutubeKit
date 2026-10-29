@@ -1,6 +1,6 @@
 {
   "id": "/",
-  "name": "YoutubeKit — 選んだ分だけ、観る。",
+  "name": "YoutubeKit",
   "short_name": "YoutubeKit",
   "description": "自分で選んだYouTube動画だけを有限のキューで再生する個人用アプリ",
   "lang": "ja",

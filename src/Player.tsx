@@ -168,7 +168,7 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
       <div className="section-heading">
         <div>
           <p className="eyebrow">NOW WATCHING</p>
-          <h1>選んだ分だけ、観る。</h1>
+          <h1>選んだ分だけ観れるサイト</h1>
         </div>
         <span className="tag">
           {index + 1} / {videos.length} 本
