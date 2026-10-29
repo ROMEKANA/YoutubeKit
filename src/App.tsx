@@ -1,10 +1,12 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 import { version as appVersion } from "../package.json";
 import {
   toggleQueueItem,
@@ -210,13 +212,20 @@ function CatalogApp({
   for (const video of catalog.queueVideos)
     knownVideos.current.set(video.id, video);
   for (const video of videos) knownVideos.current.set(video.id, video);
-  const queueVideos = saved.queue.map((id) => knownVideos.current.get(id));
+  const queueVideos = useMemo(
+    () => saved.queue.map((id) => knownVideos.current.get(id)),
+    [saved.queue, catalog.queueVideos, videos],
+  );
+  const playableQueue = useMemo(
+    () => queueVideos.filter((video): video is Video => !!video),
+    [queueVideos],
+  );
   const queueSeconds = queueVideos.reduce(
     (sum, video) => sum + (video?.durationSeconds ?? 0),
     0,
   );
   const canPlay =
-    saved.queue.length > 0 && queueVideos.every((video) => video !== undefined);
+    saved.queue.length > 0 && playableQueue.length === saved.queue.length;
   const channels = catalog.channels;
   const visible = videos.filter(
     (video) =>
@@ -324,13 +333,24 @@ function CatalogApp({
 
   function startPlayback() {
     if (!canPlay) return;
-    setPanel(null);
-    setSession(queueVideos.filter((video): video is Video => !!video));
+    // 準備済みプレーヤーを同じタップ処理内で表示し、iPhoneの再生許可を維持する。
+    flushSync(() => {
+      setPanel(null);
+      setSession(playableQueue);
+    });
+    playerHandle.current?.startFirst();
     window.scrollTo({ top: 0 });
+  }
+
+  function endPlayback() {
+    playerHandle.current?.endSession();
+    setTheater(false);
+    setSession(null);
   }
 
   // ロゴから一覧の初期位置へ戻し、保存キューや表示設定は維持する。
   function returnToCatalogHome() {
+    playerHandle.current?.endSession();
     setTheater(false);
     setPanel(null);
     setMenuVideo(null);
@@ -460,16 +480,15 @@ function CatalogApp({
             {storageError}
           </p>
         )}
-        {session ? (
+        {(session || canPlay) && (
           <Player
             ref={playerHandle}
-            videos={session}
-            onClose={() => {
-              setTheater(false);
-              setSession(null);
-            }}
+            active={!!session}
+            videos={session ?? playableQueue}
+            onClose={endPlayback}
           />
-        ) : (
+        )}
+        {!session && (
           <>
             <div className="demo-banner" hidden>
               <span className="status-dot" />

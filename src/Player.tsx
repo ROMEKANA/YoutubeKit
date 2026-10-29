@@ -11,17 +11,26 @@ import { loadYouTubeApi } from "./youtube";
 
 interface Props {
   videos: Video[];
+  active: boolean;
   onClose: () => void;
   testMode?: boolean;
   ref?: Ref<PlayerHandle>;
 }
 
 export interface PlayerHandle {
+  startFirst: () => boolean;
+  endSession: () => void;
   togglePlayback: () => "playing" | "paused" | null;
 }
 
 // 再生開始時のキューを固定し、一覧や保存キューの編集で再生順序を変えない。
-export function Player({ videos, onClose, testMode = false, ref }: Props) {
+export function Player({
+  videos,
+  active,
+  onClose,
+  testMode = false,
+  ref,
+}: Props) {
   const host = useRef<HTMLDivElement>(null);
   const player = useRef<YT.Player | null>(null);
   const [index, setIndex] = useState(0);
@@ -31,11 +40,33 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
   const [complete, setComplete] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const tracker = useRef(new PlaylistTracker(videos.length));
+  const queueReady = useRef(false);
+  const startRequested = useRef(false);
 
   // 推測した状態ではなく公式プレーヤーの現在状態で切り替え、完了後は再開しない。
   useImperativeHandle(
     ref,
     () => ({
+      startFirst() {
+        startRequested.current = true;
+        const instance = player.current;
+        if (!instance || !queueReady.current || error) {
+          setStatus("先頭動画を再生する準備をしています…");
+          return false;
+        }
+        startRequested.current = false;
+        tracker.current = new PlaylistTracker(videos.length);
+        setComplete(false);
+        setIndex(0);
+        setStatus("先頭の動画を再生します…");
+        instance.playVideoAt(0);
+        return true;
+      },
+      endSession() {
+        startRequested.current = false;
+        player.current?.pauseVideo();
+        setStatus("キュー再生を終了しました。");
+      },
       togglePlayback() {
         const instance = player.current;
         if (!instance || !ready || complete || error) return null;
@@ -49,7 +80,7 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
         return "playing";
       },
     }),
-    [ready, complete, error],
+    [ready, complete, error, videos.length],
   );
 
   useEffect(() => {
@@ -57,7 +88,8 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
     let instance: YT.Player | undefined;
     let readyTimer: number | undefined;
     let playerReady = false;
-    let startPending = true;
+    queueReady.current = false;
+    startRequested.current = false;
     tracker.current = new PlaylistTracker(videos.length);
     setReady(false);
     setComplete(false);
@@ -70,10 +102,11 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
         setStatus("画面に戻ったら「再開」を押してください。");
       } else if (
         playerReady &&
-        startPending &&
-        instance?.getPlayerState() === 5
+        startRequested.current &&
+        queueReady.current &&
+        instance
       ) {
-        startPending = false;
+        startRequested.current = false;
         setStatus("先頭の動画を再生します…");
         instance.playVideoAt(0);
       }
@@ -107,9 +140,7 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
               readyTimer = undefined;
               setError("");
               setReady(true);
-              setStatus(
-                "再生を開始します。始まらない場合は「再開」を押してください。",
-              );
+              setStatus("再生キューを準備しています…");
               event.target.setLoop(false);
               event.target.cuePlaylist(
                 videos.map((video) => video.id),
@@ -119,10 +150,13 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
             },
             onStateChange: (event) => {
               if (disposed) return;
-              if (event.data === 5 && startPending && !document.hidden) {
-                startPending = false;
-                setStatus("先頭の動画を再生します…");
-                event.target.playVideoAt(0);
+              if (event.data === 5) {
+                queueReady.current = true;
+                if (startRequested.current && !document.hidden) {
+                  startRequested.current = false;
+                  setStatus("先頭の動画を再生します…");
+                  event.target.playVideoAt(0);
+                } else setStatus("再生を開始できます。");
                 return;
               }
               const current = event.target.getPlaylistIndex();
@@ -194,6 +228,7 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
       position >= videos.length
     )
       return;
+    startRequested.current = false;
     if (complete) {
       tracker.current = new PlaylistTracker(videos.length);
       setComplete(false);
@@ -206,7 +241,11 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
 
   const current = videos[index];
   return (
-    <section className="playback-view">
+    <section
+      className={`playback-view ${active ? "" : "player-preparing"}`.trim()}
+      aria-hidden={!active}
+      inert={!active}
+    >
       <button className="text-button back" onClick={onClose}>
         ← 動画一覧に戻る
       </button>

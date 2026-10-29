@@ -1075,6 +1075,25 @@ small {
 .playback-view h1 {
   font-size: 24px;
 }
+.player-preparing {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 200px;
+  height: 200px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+.player-preparing > :not(.player-shell) {
+  display: none;
+}
+.player-preparing .player-shell {
+  width: 200px;
+  height: 200px;
+  min-height: 200px;
+  aspect-ratio: auto;
+}
 .player-shell {
   width: 100%;
   aspect-ratio: 16/9;

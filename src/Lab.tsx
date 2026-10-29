@@ -27,7 +27,12 @@ export function Lab() {
   return (
     <main className="main playing-main">
       {started ? (
-        <Player videos={samples} testMode onClose={() => setStarted(false)} />
+        <Player
+          videos={samples}
+          active
+          testMode
+          onClose={() => setStarted(false)}
+        />
       ) : (
         <>
           <p className="eyebrow">PHASE 0 / PLAYER LAB</p>
