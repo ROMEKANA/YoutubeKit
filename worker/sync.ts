@@ -32,6 +32,27 @@ interface JobRow {
   expires_at: number;
 }
 const maxAge = 30 * 86400;
+const routineUploadBatchSize = 5;
+const recoverableChannelErrors = new Set([
+  "YOUTUBE_ITEM_FAILED",
+  "YOUTUBE_UNAVAILABLE",
+  "YOUTUBE_RESPONSE",
+  "YOUTUBE_PAGING",
+  "YOUTUBE_PAGE_EXPIRED",
+]);
+
+// 対象固有の失敗だけを記録し、認証や利用上限の失敗は全体を中断する。
+function isRecoverableChannelError(error: unknown): error is AppError {
+  return error instanceof AppError && recoverableChannelErrors.has(error.code);
+}
+
+// videos.listの1リクエスト上限に合わせてIDを分割する。
+function chunks<T>(items: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size)
+    result.push(items.slice(index, index + size));
+  return result;
+}
 
 function parseState(raw: string): JobState {
   const value = record(JSON.parse(raw));
@@ -298,6 +319,139 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
       state.videosUpdated += videos.length;
     };
 
+    // 通常更新では新着確認を5チャンネルずつ並行し、端末とWorker間の往復回数を減らす。
+    const processRoutineUploadBatch = async (): Promise<boolean> => {
+      if (state.full || state.pageToken) return false;
+      const candidateIds = state.channelIds.slice(
+        state.channelIndex,
+        state.channelIndex + routineUploadBatchSize,
+      );
+      if (candidateIds.length < 2) return false;
+      const placeholders = candidateIds.map(() => "?").join(",");
+      const rows = await c.env.DB.prepare(
+        `SELECT channel_id, title, uploads_playlist_id, video_watermark FROM channels
+        WHERE sub = ? AND channel_id IN (${placeholders})`,
+      )
+        .bind(session.sub, ...candidateIds)
+        .all<{
+          channel_id: string;
+          title: string;
+          uploads_playlist_id: string;
+          video_watermark: number | null;
+        }>();
+      const byId = new Map(rows.results.map((row) => [row.channel_id, row]));
+      const targets: {
+        id: string;
+        title: string;
+        playlistId: string;
+        watermark: number;
+      }[] = [];
+      for (const id of candidateIds) {
+        const channel = byId.get(id);
+        if (
+          !channel?.uploads_playlist_id ||
+          channel.video_watermark === null ||
+          state.freshIds.includes(id)
+        )
+          break;
+        targets.push({
+          id,
+          title: channel.title,
+          playlistId: channel.uploads_playlist_id,
+          watermark: channel.video_watermark,
+        });
+      }
+      if (targets.length < 2) return false;
+
+      type BatchResult =
+        | {
+            target: (typeof targets)[number];
+            page: Awaited<ReturnType<YouTubeClient["uploads"]>>;
+            recent: ReturnType<typeof selectRecentUploads>;
+            error?: never;
+          }
+        | {
+            target: (typeof targets)[number];
+            error: AppError;
+            page?: never;
+            recent?: never;
+          };
+      const results: BatchResult[] = await Promise.all(
+        targets.map(async (target): Promise<BatchResult> => {
+          try {
+            const page = await api.uploads(target.playlistId);
+            const cutoff = Math.max(
+              0,
+              target.watermark -
+                boundedInteger(c.env.SYNC_OVERLAP_SECONDS, 600, 86400),
+            );
+            return {
+              target,
+              page,
+              recent: selectRecentUploads(page.items, cutoff),
+            };
+          } catch (error) {
+            if (!isRecoverableChannelError(error)) throw error;
+            return { target, error };
+          }
+        }),
+      );
+      const accepted: BatchResult[] = [];
+      for (const result of results) {
+        accepted.push(result);
+        if (
+          !result.error &&
+          result.page.nextPageToken &&
+          !result.recent.reachedCutoff
+        )
+          break;
+      }
+      const detailIds = [
+        ...new Set(
+          accepted.flatMap((result) => (result.error ? [] : result.recent.ids)),
+        ),
+      ];
+      const details = (
+        await Promise.all(chunks(detailIds, 50).map((ids) => api.videos(ids)))
+      ).flat();
+
+      for (const result of accepted) {
+        if (result.error) {
+          state.issues.push({
+            channelId: result.target.id,
+            title: result.target.title || result.target.id,
+            code: result.error.code,
+            message: result.error.message,
+          });
+          state.channelIndex += 1;
+          continue;
+        }
+        const recentIds = new Set(result.recent.ids);
+        saveVideos(
+          details.filter(
+            (video) =>
+              video.channelId === result.target.id && recentIds.has(video.id),
+          ),
+        );
+        state.uploadPage = 1;
+        if (result.page.nextPageToken && !result.recent.reachedCutoff) {
+          state.pageToken = result.page.nextPageToken;
+          break;
+        }
+        writes.push(
+          guarded(
+            `UPDATE channels SET video_watermark = ?, ${rangeAssignments} WHERE sub = ? AND channel_id = ? AND $guard`,
+            [state.startedAt, session.sub, result.target.id],
+          ),
+        );
+        state.channelIndex += 1;
+        state.uploadPage = 0;
+      }
+      if (state.channelIndex >= state.channelIds.length)
+        state.phase = "refresh";
+      return true;
+    };
+
     if (state.phase === "subscriptions") {
       const page = await api.subscriptions(state.pageToken);
       const existing = await c.env.DB.prepare(
@@ -371,115 +525,107 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
         state.channelIndex = 0;
       }
     } else if (state.phase === "uploads") {
-      const id = state.channelIds[state.channelIndex];
-      const channel = id
-        ? await c.env.DB.prepare(
-            "SELECT title, uploads_playlist_id, video_watermark FROM channels WHERE sub = ? AND channel_id = ?",
-          )
-            .bind(session.sub, id)
-            .first<{
-              title: string;
-              uploads_playlist_id: string;
-              video_watermark: number | null;
-            }>()
-        : null;
-      let finishedChannel = true;
-      try {
-        if (channel?.uploads_playlist_id) {
-          const page = await api.uploads(
-            channel.uploads_playlist_id,
-            state.pageToken,
-          );
-          const cutoff =
-            state.full || state.freshIds.includes(id)
-              ? 0
-              : channel.video_watermark
-                ? Math.max(
-                    0,
-                    channel.video_watermark -
-                      boundedInteger(c.env.SYNC_OVERLAP_SECONDS, 600, 86400),
-                  )
-                : state.cutoff;
-          const recent = selectRecentUploads(page.items, cutoff);
-          saveVideos(
-            (await api.videos(recent.ids)).filter(
-              (video) => video.channelId === id,
-            ),
-          );
-          state.uploadPage += 1;
-          if (cutoff === 0) {
-            writes.push(
-              guarded(
-                `UPDATE channels SET history_page_token = ?, history_complete = ?, history_started_at = ?, ${rangeAssignments}
-              WHERE sub = ? AND channel_id = ? AND $guard`,
-                [
-                  page.nextPageToken,
-                  Number(!page.nextPageToken),
-                  state.startedAt,
-                  session.sub,
-                  id,
-                ],
+      if (!(await processRoutineUploadBatch())) {
+        const id = state.channelIds[state.channelIndex];
+        const channel = id
+          ? await c.env.DB.prepare(
+              "SELECT title, uploads_playlist_id, video_watermark FROM channels WHERE sub = ? AND channel_id = ?",
+            )
+              .bind(session.sub, id)
+              .first<{
+                title: string;
+                uploads_playlist_id: string;
+                video_watermark: number | null;
+              }>()
+          : null;
+        let finishedChannel = true;
+        try {
+          if (channel?.uploads_playlist_id) {
+            const page = await api.uploads(
+              channel.uploads_playlist_id,
+              state.pageToken,
+            );
+            const cutoff =
+              state.full || state.freshIds.includes(id)
+                ? 0
+                : channel.video_watermark
+                  ? Math.max(
+                      0,
+                      channel.video_watermark -
+                        boundedInteger(c.env.SYNC_OVERLAP_SECONDS, 600, 86400),
+                    )
+                  : state.cutoff;
+            const recent = selectRecentUploads(page.items, cutoff);
+            saveVideos(
+              (await api.videos(recent.ids)).filter(
+                (video) => video.channelId === id,
               ),
             );
+            state.uploadPage += 1;
+            if (cutoff === 0) {
+              writes.push(
+                guarded(
+                  `UPDATE channels SET history_page_token = ?, history_complete = ?, history_started_at = ?, ${rangeAssignments}
+              WHERE sub = ? AND channel_id = ? AND $guard`,
+                  [
+                    page.nextPageToken,
+                    Number(!page.nextPageToken),
+                    state.startedAt,
+                    session.sub,
+                    id,
+                  ],
+                ),
+              );
+            }
+            if (
+              page.nextPageToken &&
+              !recent.reachedCutoff &&
+              (cutoff > 0 ||
+                state.uploadPage <
+                  boundedInteger(c.env.UPLOAD_PAGES_PER_CHANNEL, 2, 20))
+            ) {
+              state.pageToken = page.nextPageToken;
+              finishedChannel = false;
+            }
+          } else if (id) {
+            throw new AppError(
+              "YOUTUBE_ITEM_FAILED",
+              "チャンネルの投稿一覧を取得できませんでした。",
+              502,
+            );
           }
-          if (
-            page.nextPageToken &&
-            !recent.reachedCutoff &&
-            (cutoff > 0 ||
-              state.uploadPage <
-                boundedInteger(c.env.UPLOAD_PAGES_PER_CHANNEL, 2, 20))
-          ) {
-            state.pageToken = page.nextPageToken;
-            finishedChannel = false;
-          }
-        } else if (id) {
-          throw new AppError(
-            "YOUTUBE_ITEM_FAILED",
-            "チャンネルの投稿一覧を取得できませんでした。",
-            502,
-          );
+        } catch (error) {
+          // 認証・利用上限・設定・DB障害は継続せず、対象固有の失敗だけ記録して次へ進む。
+          if (!isRecoverableChannelError(error)) throw error;
+          state.issues.push({
+            channelId: id,
+            title: channel?.title || id,
+            code: error.code,
+            message: error.message,
+          });
+          if (state.full && state.issues.length === 1)
+            writes.push(
+              guarded(
+                "UPDATE accounts SET warning_revision = ? WHERE sub = ? AND $guard",
+                [acquired.job_id, session.sub],
+              ),
+            );
         }
-      } catch (error) {
-        // 認証・利用上限・設定・DB障害は継続せず、対象固有の失敗だけ記録して次へ進む。
-        if (
-          !(error instanceof AppError) ||
-          ![
-            "YOUTUBE_ITEM_FAILED",
-            "YOUTUBE_UNAVAILABLE",
-            "YOUTUBE_RESPONSE",
-            "YOUTUBE_PAGING",
-            "YOUTUBE_PAGE_EXPIRED",
-          ].includes(error.code)
-        )
-          throw error;
-        state.issues.push({
-          channelId: id,
-          title: channel?.title || id,
-          code: error.code,
-          message: error.message,
-        });
-        if (state.full && state.issues.length === 1)
-          writes.push(
-            guarded(
-              "UPDATE accounts SET warning_revision = ? WHERE sub = ? AND $guard",
-              [acquired.job_id, session.sub],
-            ),
-          );
+        if (finishedChannel) {
+          if (id && !state.issues.some((issue) => issue.channelId === id))
+            writes.push(
+              guarded(
+                `UPDATE channels SET video_watermark = ?, ${rangeAssignments} WHERE sub = ? AND channel_id = ? AND $guard`,
+                [state.startedAt, session.sub, id],
+              ),
+            );
+          state.channelIndex += 1;
+          state.pageToken = "";
+          state.uploadPage = 0;
+        }
+        if (state.channelIndex >= state.channelIds.length)
+          state.phase = "refresh";
       }
-      if (finishedChannel) {
-        if (id && !state.issues.some((issue) => issue.channelId === id))
-          writes.push(
-            guarded(
-              `UPDATE channels SET video_watermark = ?, ${rangeAssignments} WHERE sub = ? AND channel_id = ? AND $guard`,
-              [state.startedAt, session.sub, id],
-            ),
-          );
-        state.channelIndex += 1;
-        state.pageToken = "";
-        state.uploadPage = 0;
-      }
-      if (state.channelIndex >= state.channelIds.length)
-        state.phase = "refresh";
     } else if (state.phase === "refresh") {
       // 過去分再取得では古い情報も再確認する。通常更新は新着だけにし、期限切れ分は日次削除する。
       const stale = state.full

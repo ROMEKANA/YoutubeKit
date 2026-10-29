@@ -792,6 +792,35 @@ describe("チャンネル同期と日時による差分取得", () => {
     await runSync(true);
     expect(seen.some((url) => url.includes("pageToken=uploads-2"))).toBe(true);
   });
+  it("通常更新は複数チャンネルの新着確認を1回のステップで並行する", async () => {
+    await authenticated();
+    await runSync();
+    const started = await post("/api/sync/start", {});
+    let state = await started.json<{
+      jobId: string;
+      phase: string;
+      processedChannels: number;
+    }>();
+    while (state.phase !== "uploads") {
+      const response = await post("/api/sync/step", { jobId: state.jobId });
+      expect(response.status, await response.clone().text()).toBe(200);
+      state = await response.json();
+    }
+
+    seen = [];
+    const response = await post("/api/sync/step", { jobId: state.jobId });
+    expect(response.status, await response.clone().text()).toBe(200);
+    state = await response.json();
+    expect(state.processedChannels).toBe(2);
+    expect(
+      seen.filter((url) => url.includes("/youtube/v3/playlistItems")),
+    ).toHaveLength(2);
+    expect(seen.some((url) => url.includes("playlistId=uploads-A"))).toBe(true);
+    expect(seen.some((url) => url.includes("playlistId=uploads-B"))).toBe(true);
+    expect(
+      seen.filter((url) => url.includes("/youtube/v3/videos")),
+    ).toHaveLength(1);
+  });
   it("API失敗時に基準日時と保存済み一覧を失わず、同じジョブを再開できる", async () => {
     await authenticated();
     await runSync();
