@@ -328,6 +328,17 @@ function CatalogApp({
     window.scrollTo({ top: 0 });
   }
 
+  // ロゴから一覧の初期位置へ戻し、保存キューや表示設定は維持する。
+  function returnToCatalogHome() {
+    setTheater(false);
+    setPanel(null);
+    setMenuVideo(null);
+    setSession(null);
+    setChannelId("all");
+    setLimit(settings.initialCount);
+    window.scrollTo({ top: 0 });
+  }
+
   return (
     <div
       className={`app-shell ${theater ? "theater-mode" : ""}`}
@@ -350,7 +361,11 @@ function CatalogApp({
           <a
             className="brand"
             href="/"
-            onClick={(event) => event.preventDefault()}
+            aria-label="すべてのチャンネルへ戻る"
+            onClick={(event) => {
+              event.preventDefault();
+              returnToCatalogHome();
+            }}
           >
             <img src="/icon.svg" alt="" />
             <span>

@@ -30,6 +30,7 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
   const [ready, setReady] = useState(false);
   const [complete, setComplete] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const tracker = useRef(new PlaylistTracker(videos.length));
 
   // 推測した状態ではなく公式プレーヤーの現在状態で切り替え、完了後は再開しない。
   useImperativeHandle(
@@ -56,7 +57,7 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
     let instance: YT.Player | undefined;
     let readyTimer: number | undefined;
     let playerReady = false;
-    const tracker = new PlaylistTracker(videos.length);
+    tracker.current = new PlaylistTracker(videos.length);
     setReady(false);
     setComplete(false);
     setError("");
@@ -117,7 +118,7 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
             onStateChange: (event) => {
               if (disposed) return;
               const current = event.target.getPlaylistIndex();
-              const action = tracker.observe(event.data, current);
+              const action = tracker.current.observe(event.data, current);
               if (action === "playing") {
                 setIndex(current);
                 setError("");
@@ -173,6 +174,27 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
       player.current = null;
     };
   }, [videos, attempt]);
+
+  // 利用者が選んだキュー位置を先頭から再生し、完了後なら終了判定も新しく始める。
+  function playFromQueue(position: number) {
+    const instance = player.current;
+    if (
+      !instance ||
+      !ready ||
+      error ||
+      position < 0 ||
+      position >= videos.length
+    )
+      return;
+    if (complete) {
+      tracker.current = new PlaylistTracker(videos.length);
+      setComplete(false);
+    }
+    setIndex(position);
+    setStatus(`${position + 1}本目を最初から再生します…`);
+    instance.playVideoAt(position);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
 
   const current = videos[index];
   return (
@@ -238,27 +260,34 @@ export function Player({ videos, onClose, testMode = false, ref }: Props) {
         <h2>今回の再生キュー</h2>
         <p className="muted">
           {complete
-            ? "おつかれさまでした。キューは保存されています。"
-            : "この順番で再生し、最後の動画で終了します。"}
+            ? "おつかれさまでした。動画を押すと、その位置からもう一度再生できます。"
+            : "動画を押すと、その動画を最初から再生します。最後の動画で終了します。"}
         </p>
         <ol>
           {videos.map((video, position) => (
             <li
               key={video.id}
               className={position === index ? "current" : ""}
-              aria-current={position === index ? "true" : undefined}
             >
-              <span>{String(position + 1).padStart(2, "0")}</span>
-              <div>
-                {video.title}
-                <small>
-                  {position === index
-                    ? "現在の動画"
-                    : position === index + 1
-                      ? "次の動画"
-                      : video.channel}
-                </small>
-              </div>
+              <button
+                className="session-queue-item"
+                disabled={!ready || !!error}
+                aria-current={position === index ? "true" : undefined}
+                aria-label={`${position + 1}本目 ${video.title}を最初から再生`}
+                onClick={() => playFromQueue(position)}
+              >
+                <span>{String(position + 1).padStart(2, "0")}</span>
+                <div>
+                  {video.title}
+                  <small>
+                    {position === index
+                      ? "現在の動画"
+                      : position === index + 1
+                        ? "次の動画"
+                        : video.channel}
+                  </small>
+                </div>
+              </button>
             </li>
           ))}
         </ol>
