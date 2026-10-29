@@ -200,6 +200,7 @@ function CatalogApp({
   const [session, setSession] = useState<Video[] | null>(null);
   const [theater, setTheater] = useState(false);
   const playerHandle = useRef<PlayerHandle>(null);
+  const theaterButton = useRef<HTMLButtonElement>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const dragOrigin = useRef<number | null>(null);
   const dragTarget = useRef<number | null>(null);
@@ -389,6 +390,7 @@ function CatalogApp({
             <button
               className={`icon-button ${theater ? "active" : ""}`}
               aria-label="シアターモード"
+              ref={theaterButton}
               title="シアターモード"
               aria-pressed={theater}
               onClick={() => setTheater(true)}
@@ -1074,7 +1076,7 @@ function CatalogApp({
               />
             </label>
             <p className="panel-note theater-instructions" hidden>
-              更新と目の間のアイコンを押すと、確認なしでページ全体をこの明るさにします。プレーヤーを含む画面全体のタップをガードし、トリプルタップで一時停止、3秒長押しで解除します。再開や通常操作は解除後に行ってください。
+              更新と目の間のアイコンを押すと、確認なしでページ全体をこの明るさにします。プレーヤーを含む画面全体のタップをガードし、トリプルタップで再生・一時停止を切り替えます。シアターボタンの位置をタップ、または3秒長押しで解除します。
             </p>
             <p className="panel-note" hidden>
               本体の輝度やSafariのアドレスバーは変更できません。省電力にはコントロールセンターで本体の明るさも下げてください。自動ロック防止は端末が許可する場合だけ有効です。画面ロック中やバックグラウンドでの再生には対応しません。
@@ -1276,7 +1278,8 @@ function CatalogApp({
       )}
       {theater && (
         <TheaterControls
-          onPause={() => playerHandle.current?.pause()}
+          onTogglePlayback={() => playerHandle.current?.togglePlayback() ?? null}
+          exitButton={theaterButton}
           onExit={() => setTheater(false)}
         />
       )}

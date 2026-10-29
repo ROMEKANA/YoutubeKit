@@ -3,7 +3,7 @@
 :root {
   font-family: "Noto Sans JP", system-ui, sans-serif;
   color: #263b33;
-  background: #f6f5f0;
+  background: #000;
   font-synthesis: none;
   font-weight: 400;
   --green: #244b41;
@@ -19,6 +19,10 @@
 }
 body {
   margin: 0;
+}
+.app-shell {
+  min-height: 100dvh;
+  background: #f6f5f0;
 }
 button,
 input,
@@ -157,7 +161,7 @@ small {
   position: sticky;
   top: 0;
   z-index: 10;
-  background: #f6f5f0f5;
+  background: linear-gradient(to bottom, #000 0 env(safe-area-inset-top, 0px), #f6f5f0 env(safe-area-inset-top, 0px) 100%);
   border-bottom: 1px solid var(--line);
   padding-top: env(safe-area-inset-top);
 }

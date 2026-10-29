@@ -1,5 +1,5 @@
 // 短い3連続タップと、移動せず3秒続いた長押しだけを受け付ける。
-export function createTheaterGestures(pause: () => void, exit: () => void) {
+export function createTheaterGestures(togglePlayback: () => void, exit: () => void) {
   const pointers = new Set<number>();
   let start: { id: number; x: number; y: number; time: number } | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -41,7 +41,7 @@ export function createTheaterGestures(pause: () => void, exit: () => void) {
       lastTap = Date.now();
       if (++taps === 3) {
         taps = 0;
-        pause();
+        togglePlayback();
       }
     },
     cancel(id: number) {

@@ -1,16 +1,34 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createTheaterGestures } from "./theaterGestures";
 
 // 映像を隠さない透明な操作面で、利用者が解除するまで誤タップを防ぐ。
 export function TheaterControls({
-  onPause,
+  onTogglePlayback,
   onExit,
+  exitButton,
 }: {
-  onPause: () => void;
+  onTogglePlayback: () => "playing" | "paused" | null;
   onExit: () => void;
+  exitButton: RefObject<HTMLButtonElement | null>;
 }) {
-  const callbacks = useRef({ onPause, onExit });
-  callbacks.current = { onPause, onExit };
+  const callbacks = useRef({ onTogglePlayback, onExit });
+  callbacks.current = { onTogglePlayback, onExit };
+  const exitTap = useRef<{
+    id: number;
+    x: number;
+    y: number;
+    time: number;
+  } | null>(null);
+  const hitsExit = (x: number, y: number) => {
+    const rect = exitButton.current?.getBoundingClientRect();
+    return (
+      !!rect &&
+      x >= rect.left &&
+      x <= rect.right &&
+      y >= rect.top &&
+      y <= rect.bottom
+    );
+  };
   const [message, setMessage] = useState("");
   const [wakeMessage, setWakeMessage] = useState(
     "画面の自動ロック防止を確認しています…",
@@ -18,8 +36,14 @@ export function TheaterControls({
   const [gestures] = useState(() =>
     createTheaterGestures(
       () => {
-        callbacks.current.onPause();
-        setMessage("一時停止しました。3秒長押しで解除して再開できます。");
+        const state = callbacks.current.onTogglePlayback();
+        setMessage(
+          state === "paused"
+            ? "一時停止しました。"
+            : state === "playing"
+              ? "再生を再開します。"
+              : "現在は再生を切り替えられません。",
+        );
       },
       () => callbacks.current.onExit(),
     ),
@@ -29,7 +53,7 @@ export function TheaterControls({
     // メタタグに加え、背景色を参照するSafari向けにも黒を指定する。
     const originals = [
       ["theme-color", "#000000"],
-      ["apple-mobile-web-app-status-bar-style", "black"],
+      ["apple-mobile-web-app-status-bar-style", "black-translucent"],
     ].map(([name, color]) => {
       const meta = document.querySelector<HTMLMetaElement>(
         `meta[name="${name}"]`,
@@ -100,7 +124,7 @@ export function TheaterControls({
       className="theater-shield"
       role="button"
       tabIndex={0}
-      aria-label={`トリプルタップで一時停止、3秒長押しでシアターモードを解除。キーボードではEscapeまたはEnterで解除。${wakeMessage} ${message}`}
+      aria-label={`トリプルタップで再生・一時停止を切り替え、シアターボタンの位置をタップまたは3秒長押しで解除。キーボードではEscapeまたはEnterで解除。${wakeMessage} ${message}`}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
         if (event.key === "Tab") event.preventDefault();
@@ -111,14 +135,43 @@ export function TheaterControls({
       }}
       onPointerDown={(event) => {
         if (event.pointerType === "mouse" && event.button !== 0) return;
+        exitTap.current =
+          event.isPrimary && hitsExit(event.clientX, event.clientY)
+            ? {
+                id: event.pointerId,
+                x: event.clientX,
+                y: event.clientY,
+                time: Date.now(),
+              }
+            : null;
         event.currentTarget.setPointerCapture(event.pointerId);
         gestures.down(event.pointerId, event.clientX, event.clientY);
       }}
-      onPointerMove={(event) =>
-        gestures.move(event.pointerId, event.clientX, event.clientY)
-      }
-      onPointerUp={(event) => gestures.up(event.pointerId)}
-      onPointerCancel={(event) => gestures.cancel(event.pointerId)}
+      onPointerMove={(event) => {
+        const tap = exitTap.current;
+        if (
+          tap &&
+          Math.hypot(event.clientX - tap.x, event.clientY - tap.y) > 12
+        )
+          exitTap.current = null;
+        gestures.move(event.pointerId, event.clientX, event.clientY);
+      }}
+      onPointerUp={(event) => {
+        const tap = exitTap.current;
+        exitTap.current = null;
+        if (
+          tap?.id === event.pointerId &&
+          Date.now() - tap.time <= 350 &&
+          hitsExit(event.clientX, event.clientY)
+        ) {
+          gestures.cancel(event.pointerId);
+          onExit();
+        } else gestures.up(event.pointerId);
+      }}
+      onPointerCancel={(event) => {
+        exitTap.current = null;
+        gestures.cancel(event.pointerId);
+      }}
     />
   );
 }

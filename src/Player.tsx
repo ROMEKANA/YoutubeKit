@@ -17,24 +17,39 @@ interface Props {
 }
 
 export interface PlayerHandle {
-  pause: () => void;
+  togglePlayback: () => "playing" | "paused" | null;
 }
 
 // 再生開始時のキューを固定し、一覧や保存キューの編集で再生順序を変えない。
 export function Player({ videos, onClose, testMode = false, ref }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const player = useRef<YT.Player | null>(null);
-  useImperativeHandle(
-    ref,
-    () => ({ pause: () => player.current?.pauseVideo() }),
-    [],
-  );
   const [index, setIndex] = useState(0);
   const [status, setStatus] = useState("YouTubeプレーヤーを読み込んでいます…");
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
   const [complete, setComplete] = useState(false);
   const [attempt, setAttempt] = useState(0);
+
+  // 推測した状態ではなく公式プレーヤーの現在状態で切り替え、完了後は再開しない。
+  useImperativeHandle(
+    ref,
+    () => ({
+      togglePlayback() {
+        const instance = player.current;
+        if (!instance || !ready || complete || error) return null;
+        const state = instance.getPlayerState();
+        if (state === 0) return null;
+        if (state === 1 || state === 3) {
+          instance.pauseVideo();
+          return "paused";
+        }
+        instance.playVideo();
+        return "playing";
+      },
+    }),
+    [ready, complete, error],
+  );
 
   useEffect(() => {
     let disposed = false;
