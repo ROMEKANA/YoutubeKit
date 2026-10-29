@@ -13,6 +13,7 @@ interface Props {
   videos: Video[];
   active: boolean;
   onClose: () => void;
+  onSaveQueue?: () => void;
   testMode?: boolean;
   ref?: Ref<PlayerHandle>;
 }
@@ -28,6 +29,7 @@ export function Player({
   videos,
   active,
   onClose,
+  onSaveQueue,
   testMode = false,
   ref,
 }: Props) {
@@ -302,6 +304,14 @@ export function Player({
         <button className="secondary" onClick={onClose}>
           キュー再生を終了
         </button>
+        {onSaveQueue && (
+          <button
+            className="secondary save-playing-queue"
+            onClick={onSaveQueue}
+          >
+            このキューを保存
+          </button>
+        )}
       </div>
       <div className="session-queue">
         <h2>今回の再生キュー</h2>

@@ -149,6 +149,17 @@ small {
   color: #869081;
   margin-bottom: 10px;
 }
+.saved-queue-link {
+  display: block;
+  width: fit-content;
+  padding: 0;
+  margin-bottom: 9px;
+  color: #c46f19;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .status-dot {
   display: inline-block;
   width: 6px;
@@ -924,6 +935,56 @@ small {
   padding: 0 8px;
   color: #b3bbaa;
 }
+.queue-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.saved-queue-list {
+  list-style: none;
+  padding: 0;
+  margin: 5px 0 0;
+  max-height: min(58dvh, 520px);
+  overflow-y: auto;
+}
+.saved-queue-list li {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+.saved-queue-select {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 17px 8px;
+  text-align: left;
+}
+.saved-queue-select span {
+  overflow-wrap: anywhere;
+}
+.saved-queue-select:hover {
+  background: #eef2e6;
+}
+.save-queue-form {
+  display: grid;
+  gap: 14px;
+}
+.save-queue-form label {
+  font-size: 12px;
+  font-weight: 600;
+}
+.save-queue-form input {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  color: inherit;
+  background: white;
+  border: 1px solid #dce1d3;
+  border-radius: 9px;
+}
 .queue-items {
   list-style: none;
   margin: 18px 0;
@@ -1124,6 +1185,9 @@ small {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 25px;
+}
+.save-playing-queue {
+  margin-left: auto;
 }
 .session-queue {
   margin-top: 40px;

@@ -408,9 +408,16 @@ export function useCatalog() {
       if (status.authenticated && status.account) {
         let ids: string[] = [];
         try {
-          ids = restoreState(
+          const restoredState = restoreState(
             localStorage.getItem(`youtubekit.account.${status.account.sub}.v1`),
-          ).queue;
+          );
+          // 現在のキューだけでなく、保存キューも再起動後に選択できるよう動画情報を復元する。
+          ids = [
+            ...new Set([
+              ...restoredState.queue,
+              ...restoredState.savedQueues.flatMap((queue) => queue.videoIds),
+            ]),
+          ];
         } catch {
           /* 保存不可のブラウザでも一覧は使用できる。 */
         }

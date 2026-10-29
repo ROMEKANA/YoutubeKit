@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   addToQueue,
+  appendQueue,
+  createSavedQueueId,
   defaultSettings,
   formatDuration,
   moveItem,
@@ -47,6 +49,19 @@ describe("キューと保存データ", () => {
       "aqz-KE-bpKQ",
     ]);
   });
+  it("保存キューは現在のキュー末尾へ重複なしで追加する", () => {
+    expect(
+      appendQueue(
+        ["aqz-KE-bpKQ", "eRsGyueVLvQ"],
+        ["eRsGyueVLvQ", "R6MlUcmOul8"],
+      ),
+    ).toEqual(["aqz-KE-bpKQ", "eRsGyueVLvQ", "R6MlUcmOul8"]);
+  });
+  it("保存キュー用にUUIDを生成する", () => {
+    expect(createSavedQueueId()).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
   it("並べ替えても他の動画を欠落させない", () => {
     expect(moveItem(["a", "b", "c"], 0, 2)).toEqual(["b", "c", "a"]);
     expect(moveItem(["a", "b"], 0, -1)).toEqual(["a", "b"]);
@@ -54,6 +69,13 @@ describe("キューと保存データ", () => {
   it("キュー・非表示・設定を保存形式から復元する", () => {
     const data = {
       queue: ["aqz-KE-bpKQ"],
+      savedQueues: [
+        {
+          id: "550e8400-e29b-41d4-a716-446655440000",
+          name: "あとで見る",
+          videoIds: ["aqz-KE-bpKQ"],
+        },
+      ],
       hidden: ["aqz-KE-bpKQ"],
       settings: { ...defaultSettings, densityPercent: 150 },
     };
@@ -70,6 +92,30 @@ describe("キューと保存データ", () => {
     expect(
       restoreState('{"settings":{"initialCount":-3}}').settings.initialCount,
     ).toBe(30);
+  });
+  it("同名の保存キューを別IDで保持し、不正な保存キューは除外する", () => {
+    const savedQueues = restoreState(
+      JSON.stringify({
+        savedQueues: [
+          {
+            id: "550e8400-e29b-41d4-a716-446655440000",
+            name: "同じ名前",
+            videoIds: ["aqz-KE-bpKQ"],
+          },
+          {
+            id: "550e8400-e29b-41d4-a716-446655440001",
+            name: "同じ名前",
+            videoIds: ["eRsGyueVLvQ"],
+          },
+          { id: "broken", name: "不正", videoIds: ["R6MlUcmOul8"] },
+        ],
+      }),
+    ).savedQueues;
+    expect(savedQueues).toHaveLength(2);
+    expect(savedQueues.map((queue) => queue.name)).toEqual([
+      "同じ名前",
+      "同じ名前",
+    ]);
   });
   it("合計時間を秒切り捨てせず表示する", () => {
     expect(formatDuration(3661, true)).toBe("1時間2分");

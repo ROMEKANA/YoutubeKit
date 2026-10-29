@@ -18,8 +18,15 @@ export interface Settings {
   theaterBrightness: number;
 }
 
+export interface SavedQueue {
+  id: string;
+  name: string;
+  videoIds: string[];
+}
+
 export interface SavedState {
   queue: string[];
+  savedQueues: SavedQueue[];
   hidden: string[];
   settings: Settings;
 }
@@ -36,7 +43,12 @@ export const defaultSettings: Settings = {
 
 // 保存データが旧形式や破損状態でも、利用できる項目だけを復元する。
 export function restoreState(raw: string | null): SavedState {
-  const empty = { queue: [], hidden: [], settings: { ...defaultSettings } };
+  const empty = {
+    queue: [],
+    savedQueues: [],
+    hidden: [],
+    settings: { ...defaultSettings },
+  };
   if (!raw) return empty;
   try {
     const value = JSON.parse(raw);
@@ -60,6 +72,29 @@ export function restoreState(raw: string | null): SavedState {
         ? input
         : fallback;
     const settings = value.settings ?? {};
+    const savedQueueIds = new Set<string>();
+    const savedQueues: SavedQueue[] = Array.isArray(value.savedQueues)
+      ? value.savedQueues.flatMap((item: unknown) => {
+          if (!item || typeof item !== "object") return [];
+          const candidate = item as Record<string, unknown>;
+          const id = candidate.id;
+          const name = candidate.name;
+          const videoIds = ids(candidate.videoIds);
+          if (
+            typeof id !== "string" ||
+            !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+              id,
+            ) ||
+            savedQueueIds.has(id) ||
+            typeof name !== "string" ||
+            !name.trim() ||
+            !videoIds.length
+          )
+            return [];
+          savedQueueIds.add(id);
+          return [{ id, name, videoIds }];
+        })
+      : [];
     // 旧3段階の表示設定を近い倍率へ移し、保存済みキューはそのまま引き継ぐ。
     const legacyDensity =
       settings.density === "compact"
@@ -77,6 +112,7 @@ export function restoreState(raw: string | null): SavedState {
         : legacyDensity;
     return {
       queue: ids(value.queue),
+      savedQueues,
       hidden: ids(value.hidden),
       settings: {
         densityPercent,
@@ -93,6 +129,28 @@ export function restoreState(raw: string | null): SavedState {
   } catch {
     return empty;
   }
+}
+
+// 将来サーバー同期してもブラウザ間で衝突しにくいUUIDを保存キューへ割り当てる。
+export function createSavedQueueId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((value) => value.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+}
+
+// 保存済みキューは現在の末尾へ追加し、既に選んでいる動画は重複させない。
+export function appendQueue(queue: string[], videoIds: string[]): string[] {
+  const result = [...queue];
+  const existing = new Set(queue);
+  for (const id of videoIds) {
+    if (existing.has(id)) continue;
+    existing.add(id);
+    result.push(id);
+  }
+  return result;
 }
 
 // キューの操作は動画ID単位に行い、非表示状態とは独立させる。

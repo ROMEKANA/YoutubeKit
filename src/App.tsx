@@ -9,6 +9,8 @@ import {
 import { flushSync } from "react-dom";
 import { version as appVersion } from "../package.json";
 import {
+  appendQueue,
+  createSavedQueueId,
   toggleQueueItem,
   isExcludedByDuration,
   formatDuration,
@@ -26,7 +28,8 @@ import { TheaterControls } from "./TheaterControls";
 import { useCatalog, type CatalogController } from "./useCatalog";
 import { usePwa, type PwaController } from "./usePwa";
 
-type Panel = "channels" | "queue" | "settings" | null;
+type Panel =
+  "channels" | "queue" | "savedQueues" | "saveQueue" | "settings" | null;
 const thumbnail = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 const dateLabel = formatPublishedAt;
 
@@ -194,6 +197,12 @@ function CatalogApp({
     ? new Date(catalog.lastSyncedAt * 1000).toLocaleString("ja-JP")
     : "";
   const [panel, setPanel] = useState<Panel>(null);
+  const [saveQueueReturnPanel, setSaveQueueReturnPanel] = useState<
+    "queue" | null
+  >(null);
+  const [saveQueueVideoIds, setSaveQueueVideoIds] = useState<string[]>([]);
+  const [saveQueueName, setSaveQueueName] = useState("");
+  const [saveQueueDefaultName, setSaveQueueDefaultName] = useState("");
   const [menuVideo, setMenuVideo] = useState<Video | null>(null);
   const [channelId, setChannelId] = useState("all");
   const [showHidden, setShowHidden] = useState(false);
@@ -329,6 +338,67 @@ function CatalogApp({
 
   function reorder(from: number, to: number) {
     setSaved((state) => ({ ...state, queue: moveItem(state.queue, from, to) }));
+  }
+
+  // 保存元のキューを固定し、名前入力中の並び変更や再生終了の影響を受けないようにする。
+  function openSaveQueue(videoIds: string[], returnPanel: "queue" | null) {
+    if (!videoIds.length) return;
+    setSaveQueueVideoIds([...videoIds]);
+    setSaveQueueName("");
+    setSaveQueueDefaultName(formatPublishedAt(new Date().toISOString()));
+    setSaveQueueReturnPanel(returnPanel);
+    setPanel("saveQueue");
+  }
+
+  function closeSaveQueue() {
+    setPanel(saveQueueReturnPanel);
+  }
+
+  function saveNamedQueue() {
+    if (!saveQueueVideoIds.length) return;
+    const name = saveQueueName.trim() || saveQueueDefaultName;
+    setSaved((state) => ({
+      ...state,
+      savedQueues: [
+        ...state.savedQueues,
+        {
+          id: createSavedQueueId(),
+          name,
+          videoIds: [...saveQueueVideoIds],
+        },
+      ],
+    }));
+    setToast(`「${name}」を保存しました`);
+    setPanel(saveQueueReturnPanel);
+  }
+
+  function appendSavedQueue(id: string) {
+    const selected = saved.savedQueues.find((item) => item.id === id);
+    if (!selected) return;
+    const nextQueue = appendQueue(saved.queue, selected.videoIds);
+    const addedCount = nextQueue.length - saved.queue.length;
+    setSaved((state) => ({
+      ...state,
+      queue: appendQueue(state.queue, selected.videoIds),
+    }));
+    setPanel(null);
+    setToast(
+      addedCount
+        ? `「${selected.name}」から${addedCount}本追加しました`
+        : "保存キューの動画はすべて追加済みです",
+    );
+  }
+
+  function deleteSavedQueue(id: string) {
+    const selected = saved.savedQueues.find((item) => item.id === id);
+    if (!selected) return;
+    if (!window.confirm(`保存したキュー「${selected.name}」を削除しますか？`))
+      return;
+    setSaved((state) => ({
+      ...state,
+      savedQueues: state.savedQueues.filter((item) => item.id !== id),
+    }));
+    setToast(`「${selected.name}」を削除しました`);
   }
 
   function startPlayback() {
@@ -486,6 +556,12 @@ function CatalogApp({
             active={!!session}
             videos={session ?? playableQueue}
             onClose={endPlayback}
+            onSaveQueue={() =>
+              openSaveQueue(
+                (session ?? playableQueue).map((video) => video.id),
+                null,
+              )
+            }
           />
         )}
         {!session && (
@@ -520,6 +596,12 @@ function CatalogApp({
               <section className="video-section" aria-label="動画一覧">
                 <div className="section-heading">
                   <div>
+                    <button
+                      className="saved-queue-link"
+                      onClick={() => setPanel("savedQueues")}
+                    >
+                      保存したキューを選択
+                    </button>
                     <p className="eyebrow">VIDEO LIBRARY</p>
                     <h1>{currentChannel}</h1>
                   </div>
@@ -881,13 +963,22 @@ function CatalogApp({
               {saved.queue.length} 本 <span>·</span> 合計{" "}
               {formatDuration(queueSeconds, true)}
             </p>
-            <button
-              className="text-button danger"
-              disabled={!saved.queue.length}
-              onClick={clearQueue}
-            >
-              全削除
-            </button>
+            <div className="queue-heading-actions">
+              <button
+                className="text-button"
+                disabled={!saved.queue.length}
+                onClick={() => openSaveQueue(saved.queue, "queue")}
+              >
+                このキューを保存
+              </button>
+              <button
+                className="text-button danger"
+                disabled={!saved.queue.length}
+                onClick={clearQueue}
+              >
+                全削除
+              </button>
+            </div>
           </div>
           <p className="panel-note">
             左のハンドルをドラッグ、または上下ボタンで並べ替え。
@@ -1015,6 +1106,64 @@ function CatalogApp({
               このキューを再生
             </button>
           </div>
+        </Modal>
+      )}
+
+      {panel === "savedQueues" && (
+        <Modal title="保存したキュー" onClose={() => setPanel(null)}>
+          {!saved.savedQueues.length && (
+            <div className="empty-state">
+              <Icon name="list" size={32} />
+              <h3>保存したキューはまだありません</h3>
+              <p>再生キューを作り、「このキューを保存」から保存できます。</p>
+            </div>
+          )}
+          <ul className="saved-queue-list">
+            {saved.savedQueues.map((item) => (
+              <li key={item.id}>
+                <button
+                  className="saved-queue-select"
+                  onClick={() => appendSavedQueue(item.id)}
+                >
+                  <span>{item.name}</span>
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label={`保存したキュー「${item.name}」を削除`}
+                  onClick={() => deleteSavedQueue(item.id)}
+                >
+                  <Icon name="trash" size={18} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Modal>
+      )}
+
+      {panel === "saveQueue" && (
+        <Modal title="このキューを保存" onClose={closeSaveQueue}>
+          <form
+            className="save-queue-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveNamedQueue();
+            }}
+          >
+            <label htmlFor="saved-queue-name">名前</label>
+            <input
+              id="saved-queue-name"
+              autoFocus
+              value={saveQueueName}
+              placeholder={saveQueueDefaultName}
+              onChange={(event) => setSaveQueueName(event.target.value)}
+            />
+            <p className="panel-note">
+              空白のまま保存すると「{saveQueueDefaultName}」になります。
+            </p>
+            <button className="primary full-width" type="submit">
+              保存
+            </button>
+          </form>
         </Modal>
       )}
 
