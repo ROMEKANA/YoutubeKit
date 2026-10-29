@@ -13,6 +13,24 @@ import {
 } from "./model";
 
 describe("キューと保存データ", () => {
+  it("シアター明るさ1〜100%を復元し、旧データと範囲外は初期値へ戻す", () => {
+    for (const theaterBrightness of [1, 20, 100])
+      expect(
+        restoreState(JSON.stringify({ settings: { theaterBrightness } }))
+          .settings.theaterBrightness,
+      ).toBe(theaterBrightness);
+    for (const theaterBrightness of [0, 101, 1.5, "10", null])
+      expect(
+        restoreState(JSON.stringify({ settings: { theaterBrightness } }))
+          .settings.theaterBrightness,
+      ).toBe(20);
+    expect(restoreState('{"queue":["aqz-KE-bpKQ"]}').queue).toEqual([
+      "aqz-KE-bpKQ",
+    ]);
+    expect(
+      restoreState('{"queue":["aqz-KE-bpKQ"]}').settings.theaterBrightness,
+    ).toBe(20);
+  });
   it("投稿日時は日付と時分を表示し、秒は省く", () => {
     expect(formatPublishedAt("2026-10-29T12:34:56")).toBe("2026/10/29 12:34");
     expect(formatPublishedAt("2026-10-29T00:05:59")).toBe("2026/10/29 00:05");

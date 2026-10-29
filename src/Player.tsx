@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import type { Video } from "./model";
 import { PlaylistTracker } from "./playback";
 import { loadYouTubeApi } from "./youtube";
@@ -7,12 +13,22 @@ interface Props {
   videos: Video[];
   onClose: () => void;
   testMode?: boolean;
+  ref?: Ref<PlayerHandle>;
+}
+
+export interface PlayerHandle {
+  pause: () => void;
 }
 
 // 再生開始時のキューを固定し、一覧や保存キューの編集で再生順序を変えない。
-export function Player({ videos, onClose, testMode = false }: Props) {
+export function Player({ videos, onClose, testMode = false, ref }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const player = useRef<YT.Player | null>(null);
+  useImperativeHandle(
+    ref,
+    () => ({ pause: () => player.current?.pauseVideo() }),
+    [],
+  );
   const [index, setIndex] = useState(0);
   const [status, setStatus] = useState("YouTubeプレーヤーを読み込んでいます…");
   const [error, setError] = useState("");

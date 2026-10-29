@@ -19,7 +19,8 @@ import {
   type Video,
 } from "./model";
 import { Icon } from "./Icon";
-import { Player } from "./Player";
+import { Player, type PlayerHandle } from "./Player";
+import { TheaterControls } from "./TheaterControls";
 import { useCatalog, type CatalogController } from "./useCatalog";
 import { usePwa, type PwaController } from "./usePwa";
 
@@ -197,6 +198,8 @@ function CatalogApp({
   const [limit, setLimit] = useState(saved.settings.initialCount);
   const [toast, setToast] = useState("");
   const [session, setSession] = useState<Video[] | null>(null);
+  const [theater, setTheater] = useState(false);
+  const playerHandle = useRef<PlayerHandle>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const dragOrigin = useRef<number | null>(null);
   const dragTarget = useRef<number | null>(null);
@@ -287,6 +290,13 @@ function CatalogApp({
     );
   }
 
+  function clearQueue() {
+    if (!saved.queue.length) return;
+    if (!window.confirm("再生キューをすべて削除しますか？")) return;
+    setSaved((state) => ({ ...state, queue: [] }));
+    setToast("再生キューをすべて削除しました");
+  }
+
   function toggleHidden(video: Video) {
     const wasHidden = saved.hidden.includes(video.id);
     setSaved((state) => ({
@@ -318,8 +328,15 @@ function CatalogApp({
   }
 
   return (
-    <>
-      <header className="header">
+    <div
+      className={`app-shell ${theater ? "theater-mode" : ""}`}
+      style={
+        {
+          "--theater-brightness": `${settings.theaterBrightness}%`,
+        } as CSSProperties
+      }
+    >
+      <header className="header" inert={theater}>
         <div className="header-inner">
           <button
             className="icon-button"
@@ -368,6 +385,15 @@ function CatalogApp({
               <Icon name="refresh" />
             </button>
             <button
+              className={`icon-button ${theater ? "active" : ""}`}
+              aria-label="シアターモード"
+              title="シアターモード"
+              aria-pressed={theater}
+              onClick={() => setTheater(true)}
+            >
+              <Icon name="theater" />
+            </button>
+            <button
               className={`icon-button ${showHidden ? "active" : ""}`}
               aria-label="非表示動画も表示"
               aria-pressed={showHidden}
@@ -388,7 +414,7 @@ function CatalogApp({
         </div>
       </header>
 
-      <main className={`main ${session ? "playing-main" : ""}`}>
+      <main className={`main ${session ? "playing-main" : ""}`} inert={theater}>
         {!pwa.online && (
           <p className="notice sync-warning" role="status">
             通信できません。動画の取得・再生にはインターネット接続が必要です。保存したキューと設定はこの端末に残っています。
@@ -416,7 +442,14 @@ function CatalogApp({
           </p>
         )}
         {session ? (
-          <Player videos={session} onClose={() => setSession(null)} />
+          <Player
+            ref={playerHandle}
+            videos={session}
+            onClose={() => {
+              setTheater(false);
+              setSession(null);
+            }}
+          />
         ) : (
           <>
             <div className="demo-banner">
@@ -688,7 +721,7 @@ function CatalogApp({
       </main>
 
       {!session && (
-        <footer className="queue-bar">
+        <footer className="queue-bar" inert={theater}>
           <div className="queue-bar-inner">
             <button className="queue-summary" onClick={() => setPanel("queue")}>
               <span className="queue-icon">
@@ -707,6 +740,16 @@ function CatalogApp({
                 </small>
               </span>
               <Icon name="arrow" size={16} />
+            </button>
+            <button
+              className="secondary queue-clear"
+              aria-label="再生キューを全削除"
+              title="再生キューを全削除"
+              disabled={!saved.queue.length}
+              onClick={clearQueue}
+            >
+              <Icon name="trash" size={18} />
+              <span>全削除</span>
             </button>
             <button
               className="primary play-button"
@@ -787,10 +830,7 @@ function CatalogApp({
             <button
               className="text-button danger"
               disabled={!saved.queue.length}
-              onClick={() => {
-                if (window.confirm("再生キューをすべて削除しますか？"))
-                  setSaved((state) => ({ ...state, queue: [] }));
-              }}
+              onClick={clearQueue}
             >
               全削除
             </button>
@@ -1080,12 +1120,38 @@ function CatalogApp({
                 onChange={(event) => {
                   const value = Number(event.target.value);
                   if (Number.isFinite(value) && value >= 1 / 60 && value <= 60)
-                    updateSettings({ shortThreshold: Math.round(value * 60) });
+                    updateSettings({
+                      shortThreshold: Math.round(value * 60),
+                    });
                 }}
               />
             </label>
             <p className="panel-note">
               初期値は3分です。Shortsだけの正確な判別はできないため、通常の短い動画も除外されます。
+            </p>
+          </div>
+          <div className="settings-section">
+            <h3>シアターモード</h3>
+            <label className="theater-brightness">
+              表示の明るさ <output>{settings.theaterBrightness}%</output>
+              <input
+                type="range"
+                min="1"
+                max="100"
+                step="1"
+                value={settings.theaterBrightness}
+                onChange={(event) =>
+                  updateSettings({
+                    theaterBrightness: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <p className="panel-note theater-instructions">
+              更新と目の間のアイコンを押すと、確認なしでページ全体をこの明るさにします。プレーヤーを含む画面全体のタップをガードし、トリプルタップで一時停止、3秒長押しで解除します。再開や通常操作は解除後に行ってください。
+            </p>
+            <p className="panel-note">
+              本体の輝度やSafariのアドレスバーは変更できません。省電力にはコントロールセンターで本体の明るさも下げてください。自動ロック防止は端末が許可する場合だけ有効です。画面ロック中やバックグラウンドでの再生には対応しません。
             </p>
           </div>
           <div className="settings-section">
@@ -1180,6 +1246,12 @@ function CatalogApp({
           </div>
         </Modal>
       )}
-    </>
+      {theater && (
+        <TheaterControls
+          onPause={() => playerHandle.current?.pause()}
+          onExit={() => setTheater(false)}
+        />
+      )}
+    </div>
   );
 }

@@ -592,6 +592,18 @@ small {
   gap: 15px;
   text-align: left;
   min-width: 0;
+  flex: 1;
+}
+.queue-summary > span:last-of-type {
+  min-width: 0;
+}
+.queue-clear {
+  flex-shrink: 0;
+  gap: 6px;
+  padding-inline: 12px;
+}
+.queue-clear:disabled {
+  opacity: 0.4;
 }
 .queue-icon {
   width: 44px;
@@ -631,6 +643,9 @@ small {
   color: #969e8c;
   font-size: 10px;
   margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .queue-summary > svg {
   margin-left: 18px;
@@ -967,6 +982,36 @@ small {
   padding-top: 25px;
   padding-bottom: 60px;
 }
+.theater-brightness {
+  display: block;
+  margin-block: 24px;
+  font-size: 14px;
+}
+.theater-brightness output { float: right; }
+.theater-brightness input { display: block; width: 100%; margin-top: 18px; }
+.theater-instructions { margin-bottom: 20px; }
+.theater-mode {
+  min-height: 100dvh;
+  background: color-mix(in srgb, #f6f5f0 var(--theater-brightness), #000);
+}
+.theater-mode > main { background: #f6f5f0; }
+.theater-mode > :not(.theater-shield) {
+  filter: brightness(var(--theater-brightness));
+}
+.theater-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+@media (max-width: 420px) {
+  .brand img { display: none; }
+  .brand { font-size: 19px; }
+}
 .lab-steps {
   font-size: 13px;
   line-height: 2;
@@ -1085,6 +1130,8 @@ small {
     width: 27px;
     height: 27px;
   }
+  .brand { min-width: 0; }
+  .brand > span { white-space: nowrap; }
   .header-actions {
     gap: 0;
   }
@@ -1166,6 +1213,15 @@ small {
     font-size: 12px;
     min-height: 45px;
   }
+  .queue-clear {
+    width: 44px;
+    min-height: 45px;
+    justify-content: center;
+    padding: 10px;
+  }
+  .queue-clear span {
+    display: none;
+  }
   .list-end {
     font-size: 9px;
     gap: 6px;
@@ -1238,6 +1294,7 @@ small {
   }
 }
 @media (max-width: 360px) {
+  .brand img { display: none; }
   .header-actions .icon-button {
     width: 34px;
   }

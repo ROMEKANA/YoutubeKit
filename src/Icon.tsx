@@ -1,6 +1,7 @@
 type Name =
   | "menu"
   | "refresh"
+  | "theater"
   | "eye"
   | "eye-off"
   | "settings"
@@ -15,6 +16,7 @@ type Name =
 const paths: Record<Name, string> = {
   menu: "M4 6h16M4 12h16M4 18h16",
   refresh: "M20 8a8 8 0 1 0 0 8M20 3v5h-5",
+  theater: "M4 4h16v12H4V4ZM8 20h8M12 16v4M8 8h8M8 12h5",
   eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
   "eye-off":
     "M3 3l18 18M9.9 5.2A12 12 0 0 1 12 5c6 0 10 7 10 7a18 18 0 0 1-3 3.8M6.3 6.3A22 22 0 0 0 2 12s4 7 10 7a12 12 0 0 0 5.7-1.7M9.9 9.9a3 3 0 0 0 4.2 4.2",

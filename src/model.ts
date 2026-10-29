@@ -15,6 +15,7 @@ export interface Settings {
   additionalCount: number;
   excludeShort: boolean;
   shortThreshold: number;
+  theaterBrightness: number;
 }
 
 export interface SavedState {
@@ -30,6 +31,7 @@ export const defaultSettings: Settings = {
   additionalCount: 30,
   excludeShort: true,
   shortThreshold: 180,
+  theaterBrightness: 20,
 };
 
 // 保存データが旧形式や破損状態でも、利用できる項目だけを復元する。
@@ -85,6 +87,7 @@ export function restoreState(raw: string | null): SavedState {
             ? settings.excludeShort
             : true,
         shortThreshold: number(settings.shortThreshold, 180, 3600),
+        theaterBrightness: number(settings.theaterBrightness, 20, 100),
       },
     };
   } catch {
