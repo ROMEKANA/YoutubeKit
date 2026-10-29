@@ -48,6 +48,7 @@ export function Player({
   const [status, setStatus] = useState("YouTubeプレーヤーを読み込んでいます…");
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const [complete, setComplete] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const tracker = useRef(new PlaylistTracker(videos.length));
@@ -61,6 +62,8 @@ export function Player({
     positionSeconds: number;
   } | null>(null);
   const resumeCheckedVideoId = useRef<string | null>(null);
+  const lastPlaylistIndex = useRef(-1);
+  const lastPlayingIndex = useRef(-1);
   const lastPlaybackSample = useRef<{
     videoId: string;
     positionSeconds: number;
@@ -117,6 +120,15 @@ export function Player({
     if (sample) persistPlaybackSample(sample);
   }
 
+  // 終了イベント時にプレーヤー番号が次へ変わっていても、実際に終了した動画だけを消去する。
+  function clearCompletedPlayback(position: number) {
+    const video = videosRef.current[position];
+    if (!video) return;
+    const sample = { videoId: video.id, positionSeconds: 0 };
+    lastPlaybackSample.current = sample;
+    persistPlaybackSample(sample);
+  }
+
   // すべての動画遷移をこの関数へ通し、設定がオンの時だけ保存位置へ移動する。
   function restoreCurrentVideoPosition(
     instance: YT.Player,
@@ -155,6 +167,22 @@ export function Player({
     instance.playVideoAt(request.position);
   }
 
+  // 通常画面の中央ボタンとシアターモードのトリプルタップで同じ切替処理を使う。
+  function togglePlayerPlayback(): "playing" | "paused" | null {
+    const instance = player.current;
+    if (!instance || !ready || complete || error) return null;
+    const state = instance.getPlayerState();
+    if (state === 0) return null;
+    if (state === 1 || state === 3) {
+      instance.pauseVideo();
+      setPlaying(false);
+      return "paused";
+    }
+    instance.playVideo();
+    setPlaying(true);
+    return "playing";
+  }
+
   // 推測した状態ではなく公式プレーヤーの現在状態で切り替え、完了後は再開しない。
   useImperativeHandle(
     ref,
@@ -188,20 +216,10 @@ export function Player({
           persistCurrentPlayback(instance);
           instance.pauseVideo();
         }
+        setPlaying(false);
         setStatus("キュー再生を終了しました。");
       },
-      togglePlayback() {
-        const instance = player.current;
-        if (!instance || !ready || complete || error) return null;
-        const state = instance.getPlayerState();
-        if (state === 0) return null;
-        if (state === 1 || state === 3) {
-          instance.pauseVideo();
-          return "paused";
-        }
-        instance.playVideo();
-        return "playing";
-      },
+      togglePlayback: togglePlayerPlayback,
     }),
     [ready, complete, error, videos.length],
   );
@@ -215,10 +233,13 @@ export function Player({
     startRequested.current = null;
     pendingSeek.current = null;
     resumeCheckedVideoId.current = null;
+    lastPlaylistIndex.current = -1;
+    lastPlayingIndex.current = -1;
     lastPlaybackSample.current = null;
     lastPositionSavedAt.current = 0;
     tracker.current = new PlaylistTracker(videos.length);
     setReady(false);
+    setPlaying(false);
     setComplete(false);
     setError("");
     setIndex(0);
@@ -259,9 +280,7 @@ export function Player({
           height: "100%",
           playerVars: {
             playsinline: 1,
-            // 透明オーバーレイはYouTube要件に反するため、公式パラメータで操作を外部ボタンへ集約する。
-            controls: 0,
-            disablekb: 1,
+            controls: 1,
             origin: window.location.origin,
           },
           events: {
@@ -283,6 +302,7 @@ export function Player({
             onStateChange: (event) => {
               if (disposed) return;
               if (event.data === 5) {
+                setPlaying(false);
                 queueReady.current = true;
                 if (startRequested.current !== null && !document.hidden)
                   playRequestedPosition(event.target, startRequested.current);
@@ -290,7 +310,13 @@ export function Player({
                 return;
               }
               const current = event.target.getPlaylistIndex();
+              if (current !== lastPlaylistIndex.current) {
+                lastPlaylistIndex.current = current;
+                resumeCheckedVideoId.current = null;
+              }
               if (event.data === 1) {
+                lastPlayingIndex.current = current;
+                setPlaying(true);
                 samplePlaybackProgress(event.target);
                 const pending = pendingSeek.current;
                 pendingSeek.current = null;
@@ -307,7 +333,10 @@ export function Player({
                 )
                   return;
               }
-              const action = tracker.current.observe(event.data, current);
+              const actionIndex =
+                event.data === 0 ? lastPlayingIndex.current : current;
+              if (event.data === 0) clearCompletedPlayback(actionIndex);
+              const action = tracker.current.observe(event.data, actionIndex);
               if (action === "playing") {
                 setIndex(current);
                 persistCurrentPlayback(event.target);
@@ -315,22 +344,25 @@ export function Player({
                 setStatus("再生中");
                 if (document.hidden) event.target.pauseVideo();
               } else if (action === "complete") {
-                persistCurrentPlayback(event.target, 0);
+                setPlaying(false);
                 setComplete(true);
                 setStatus("選んだ動画の再生が終わりました。");
               } else if (event.data === 0) {
-                persistCurrentPlayback(event.target, 0);
+                setPlaying(false);
               } else if (event.data === 2) {
                 if (saveIntervalSecondsRef.current > 0)
                   persistCurrentPlayback(event.target);
+                setPlaying(false);
                 setStatus("一時停止中");
               } else if (event.data === 3) setStatus("動画を読み込んでいます…");
             },
             onAutoplayBlocked: () => {
-              if (!disposed)
+              if (!disposed) {
+                setPlaying(false);
                 setStatus(
                   "自動再生が制限されました。「再開」を押してください。",
                 );
+              }
             },
             onError: (event) => {
               if (disposed) return;
@@ -345,6 +377,7 @@ export function Player({
               setError(
                 `${messages[event.data] ?? "動画を再生できませんでした。"}（${event.data}）`,
               );
+              setPlaying(false);
               setStatus("再生を停止しています。キューは保存されています。");
               event.target.pauseVideo();
             },
@@ -468,6 +501,15 @@ export function Player({
           onClick={() => seekBy(-10)}
         >
           <Icon name="back-10" />
+        </button>
+        <button
+          className="icon-button player-control-button"
+          aria-label={playing ? "一時停止" : "再生"}
+          title={playing ? "一時停止" : "再生"}
+          disabled={!ready || complete || !!error}
+          onClick={togglePlayerPlayback}
+        >
+          <Icon name={playing ? "pause" : "play"} />
         </button>
         <button
           className="icon-button player-control-button"
