@@ -200,6 +200,13 @@ export function createSavedQueueId(): string {
   return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
 }
 
+// 保存順は変えず、一覧だけを後から保存した順に並べる。
+export function newestSavedQueuesFirst(
+  savedQueues: SavedQueue[],
+): SavedQueue[] {
+  return [...savedQueues].reverse();
+}
+
 // 保存済みキューは現在の末尾へ追加し、既に選んでいる動画は重複させない。
 export function appendQueue(queue: string[], videoIds: string[]): string[] {
   const result = [...queue];

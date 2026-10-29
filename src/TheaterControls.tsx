@@ -4,15 +4,17 @@ import { createTheaterGestures } from "./theaterGestures";
 // 映像を隠さない透明な操作面で、利用者が解除するまで誤タップを防ぐ。
 export function TheaterControls({
   onTogglePlayback,
+  onSeek,
   onExit,
   exitButton,
 }: {
   onTogglePlayback: () => "playing" | "paused" | null;
+  onSeek: (seconds: number) => boolean;
   onExit: () => void;
   exitButton: RefObject<HTMLButtonElement | null>;
 }) {
-  const callbacks = useRef({ onTogglePlayback, onExit });
-  callbacks.current = { onTogglePlayback, onExit };
+  const callbacks = useRef({ onTogglePlayback, onSeek, onExit });
+  callbacks.current = { onTogglePlayback, onSeek, onExit };
   const exitTap = useRef<{
     id: number;
     x: number;
@@ -46,6 +48,15 @@ export function TheaterControls({
         );
       },
       () => callbacks.current.onExit(),
+      (seconds) => {
+        setMessage(
+          callbacks.current.onSeek(seconds)
+            ? seconds < 0
+              ? "10秒戻しました。"
+              : "10秒進めました。"
+            : "現在は再生位置を変更できません。",
+        );
+      },
     ),
   );
   const pad = useRef<HTMLDivElement>(null);
@@ -124,7 +135,7 @@ export function TheaterControls({
       className="theater-shield"
       role="button"
       tabIndex={0}
-      aria-label={`トリプルタップで再生・一時停止を切り替え、シアターボタンの位置をタップまたは3秒長押しで解除。キーボードではEscapeまたはEnterで解除。${wakeMessage} ${message}`}
+      aria-label={`左スワイプで10秒戻し、右スワイプで10秒進む。トリプルタップで再生・一時停止を切り替え、シアターボタンの位置をタップまたは3秒長押しで解除。キーボードではEscapeまたはEnterで解除。${wakeMessage} ${message}`}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
         if (event.key === "Tab") event.preventDefault();
@@ -166,7 +177,7 @@ export function TheaterControls({
         ) {
           gestures.cancel(event.pointerId);
           onExit();
-        } else gestures.up(event.pointerId);
+        } else gestures.up(event.pointerId, event.clientX, event.clientY);
       }}
       onPointerCancel={(event) => {
         exitTap.current = null;

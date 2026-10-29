@@ -7,14 +7,15 @@ describe("シアターモードの誤操作防止", () => {
   function setup() {
     const pause = vi.fn();
     const exit = vi.fn();
-    const gestures = createTheaterGestures(pause, exit);
+    const seekBy = vi.fn();
+    const gestures = createTheaterGestures(pause, exit, seekBy);
     const tap = () => {
       gestures.down(1, 10, 10);
       vi.advanceTimersByTime(50);
-      gestures.up(1);
+      gestures.up(1, 10, 10);
       vi.advanceTimersByTime(100);
     };
-    return { gestures, pause, exit, tap };
+    return { gestures, pause, exit, seekBy, tap };
   }
   it("1・2回のタップでは反応せず、3回で一時停止する", () => {
     const { tap, pause, exit } = setup();
@@ -38,11 +39,43 @@ describe("シアターモードの誤操作防止", () => {
     gestures.down(1, 10, 10);
     vi.advanceTimersByTime(2999);
     expect(exit).not.toHaveBeenCalled();
-    gestures.up(1);
+    gestures.up(1, 10, 10);
     gestures.down(1, 10, 10);
     vi.advanceTimersByTime(3000);
-    gestures.up(1);
+    gestures.up(1, 10, 10);
     expect(exit).toHaveBeenCalledTimes(1);
+    expect(pause).not.toHaveBeenCalled();
+  });
+  it("左右スワイプで10秒戻し・進めを切り替える", () => {
+    const { gestures, seekBy, pause, exit } = setup();
+    gestures.down(1, 100, 50);
+    gestures.move(1, 40, 52);
+    gestures.up(1, 40, 52);
+    gestures.down(1, 40, 50);
+    gestures.move(1, 100, 48);
+    gestures.up(1, 100, 48);
+    expect(seekBy.mock.calls).toEqual([[-10], [10]]);
+    expect(pause).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+  });
+  it("縦移動と短い横移動では再生位置を変えない", () => {
+    const { gestures, seekBy } = setup();
+    gestures.down(1, 50, 50);
+    gestures.move(1, 52, 120);
+    gestures.up(1, 52, 120);
+    gestures.down(1, 50, 50);
+    gestures.move(1, 80, 50);
+    gestures.up(1, 80, 50);
+    expect(seekBy).not.toHaveBeenCalled();
+  });
+  it("一度大きく移動した操作は開始点に戻ってもタップにしない", () => {
+    const { gestures, pause } = setup();
+    for (let count = 0; count < 3; count += 1) {
+      gestures.down(1, 50, 50);
+      gestures.move(1, 80, 50);
+      gestures.move(1, 50, 50);
+      gestures.up(1, 50, 50);
+    }
     expect(pause).not.toHaveBeenCalled();
   });
   it("移動・複数指・キャンセル・破棄では長押しを中断する", () => {

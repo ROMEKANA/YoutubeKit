@@ -27,6 +27,7 @@ export interface PlayerHandle {
   startAt: (position: number, positionSeconds: number) => boolean;
   endSession: () => void;
   togglePlayback: () => "playing" | "paused" | null;
+  seekBy: (seconds: number) => boolean;
 }
 
 // 再生開始時のキューを固定し、一覧や保存キューの編集で再生順序を変えない。
@@ -220,6 +221,7 @@ export function Player({
         setStatus("キュー再生を終了しました。");
       },
       togglePlayback: togglePlayerPlayback,
+      seekBy: seekPlayerBy,
     }),
     [ready, complete, error, videos.length],
   );
@@ -451,9 +453,9 @@ export function Player({
   }
 
   // 動画内の移動は公式APIだけを使い、現在のキュー位置は変更しない。
-  function seekBy(seconds: number) {
+  function seekPlayerBy(seconds: number): boolean {
     const instance = player.current;
-    if (!instance || !ready || complete || error) return;
+    if (!instance || !ready || complete || error) return false;
     const currentTime = instance.getCurrentTime();
     const duration = instance.getDuration();
     const upperLimit = duration > 0 ? duration : currentTime + seconds;
@@ -461,6 +463,7 @@ export function Player({
     instance.seekTo(nextTime, true);
     samplePlaybackProgress(instance, nextTime);
     setStatus(seconds < 0 ? "10秒戻しました。" : "10秒進めました。");
+    return true;
   }
 
   const current = videos[index];
@@ -498,7 +501,7 @@ export function Player({
           aria-label="10秒戻る"
           title="10秒戻る"
           disabled={!ready || complete || !!error}
-          onClick={() => seekBy(-10)}
+          onClick={() => seekPlayerBy(-10)}
         >
           <Icon name="back-10" />
         </button>
@@ -516,7 +519,7 @@ export function Player({
           aria-label="10秒進む"
           title="10秒進む"
           disabled={!ready || complete || !!error}
-          onClick={() => seekBy(10)}
+          onClick={() => seekPlayerBy(10)}
         >
           <Icon name="forward-10" />
         </button>

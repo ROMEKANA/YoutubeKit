@@ -8,6 +8,7 @@ import {
   getQueueStart,
   moveItem,
   mergeSavedQueue,
+  newestSavedQueuesFirst,
   playbackSaveIntervals,
   parseVideos,
   restoreState,
@@ -135,6 +136,23 @@ describe("キューと保存データ", () => {
     expect(createSavedQueueId()).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
+  });
+  it("保存キューの保存順を変えず、表示だけを新しい順にする", () => {
+    const older = {
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      name: "古いキュー",
+      videoIds: ["aqz-KE-bpKQ"],
+      resumeVideoId: null,
+      playbackPositions: {},
+    };
+    const newer = {
+      ...older,
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      name: "新しいキュー",
+    };
+    const savedQueues = [older, newer];
+    expect(newestSavedQueuesFirst(savedQueues)).toEqual([newer, older]);
+    expect(savedQueues).toEqual([older, newer]);
   });
   it("並べ替えても他の動画を欠落させない", () => {
     expect(moveItem(["a", "b", "c"], 0, 2)).toEqual(["b", "c", "a"]);

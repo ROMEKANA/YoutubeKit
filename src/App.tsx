@@ -18,6 +18,7 @@ import {
   readWarningDismissal,
   moveItem,
   mergeSavedQueue,
+  newestSavedQueuesFirst,
   playbackSaveIntervals,
   selectPlaybackPositions,
   restoreState,
@@ -1165,7 +1166,7 @@ function CatalogApp({
             </div>
           )}
           <ul className="saved-queue-list">
-            {saved.savedQueues.map((item) => (
+            {newestSavedQueuesFirst(saved.savedQueues).map((item) => (
               <li key={item.id}>
                 <button
                   className="saved-queue-select"
@@ -1559,7 +1560,10 @@ function CatalogApp({
       )}
       {theater && (
         <TheaterControls
-          onTogglePlayback={() => playerHandle.current?.togglePlayback() ?? null}
+          onTogglePlayback={() =>
+            playerHandle.current?.togglePlayback() ?? null
+          }
+          onSeek={(seconds) => playerHandle.current?.seekBy(seconds) ?? false}
           exitButton={theaterButton}
           onExit={() => setTheater(false)}
         />
