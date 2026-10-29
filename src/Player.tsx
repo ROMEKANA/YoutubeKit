@@ -5,6 +5,7 @@ import {
   useState,
   type Ref,
 } from "react";
+import { Icon } from "./Icon";
 import type { Video } from "./model";
 import { PlaylistTracker } from "./playback";
 import { loadYouTubeApi } from "./youtube";
@@ -258,7 +259,9 @@ export function Player({
           height: "100%",
           playerVars: {
             playsinline: 1,
-            controls: 1,
+            // 透明オーバーレイはYouTube要件に反するため、公式パラメータで操作を外部ボタンへ集約する。
+            controls: 0,
+            disablekb: 1,
             origin: window.location.origin,
           },
           events: {
@@ -414,6 +417,19 @@ export function Player({
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  // 動画内の移動は公式APIだけを使い、現在のキュー位置は変更しない。
+  function seekBy(seconds: number) {
+    const instance = player.current;
+    if (!instance || !ready || complete || error) return;
+    const currentTime = instance.getCurrentTime();
+    const duration = instance.getDuration();
+    const upperLimit = duration > 0 ? duration : currentTime + seconds;
+    const nextTime = Math.max(0, Math.min(currentTime + seconds, upperLimit));
+    instance.seekTo(nextTime, true);
+    samplePlaybackProgress(instance, nextTime);
+    setStatus(seconds < 0 ? "10秒戻しました。" : "10秒進めました。");
+  }
+
   const current = videos[index];
   return (
     <section
@@ -434,6 +450,44 @@ export function Player({
         </span>
       </div>
       <div className="player-shell" ref={host} />
+      <div className="player-transport" aria-label="動画の再生操作">
+        <button
+          className="icon-button player-control-button"
+          aria-label="前の動画"
+          title="前の動画"
+          disabled={!ready || !!error || index <= 0}
+          onClick={() => playFromQueue(index - 1)}
+        >
+          <Icon name="previous" />
+        </button>
+        <button
+          className="icon-button player-control-button"
+          aria-label="10秒戻る"
+          title="10秒戻る"
+          disabled={!ready || complete || !!error}
+          onClick={() => seekBy(-10)}
+        >
+          <Icon name="back-10" />
+        </button>
+        <button
+          className="icon-button player-control-button"
+          aria-label="10秒進む"
+          title="10秒進む"
+          disabled={!ready || complete || !!error}
+          onClick={() => seekBy(10)}
+        >
+          <Icon name="forward-10" />
+        </button>
+        <button
+          className="icon-button player-control-button"
+          aria-label="次の動画"
+          title="次の動画"
+          disabled={!ready || !!error || index >= videos.length - 1}
+          onClick={() => playFromQueue(index + 1)}
+        >
+          <Icon name="next" />
+        </button>
+      </div>
       <div className="player-status" role="status">
         {status}
       </div>

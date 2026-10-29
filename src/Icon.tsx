@@ -12,7 +12,11 @@ type Name =
   | "list"
   | "arrow"
   | "grip"
-  | "trash";
+  | "trash"
+  | "previous"
+  | "next"
+  | "back-10"
+  | "forward-10";
 const paths: Record<Name, string> = {
   menu: "M4 6h16M4 12h16M4 18h16",
   refresh: "M20 8a8 8 0 1 0 0 8M20 3v5h-5",
@@ -30,6 +34,10 @@ const paths: Record<Name, string> = {
   arrow: "m9 5 7 7-7 7",
   grip: "M9 5h.1M15 5h.1M9 12h.1M15 12h.1M9 19h.1M15 19h.1",
   trash: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7",
+  previous: "M19 5 9 12l10 7V5ZM5 5v14",
+  next: "M5 5l10 7-10 7V5ZM19 5v14",
+  "back-10": "M9 5H4v5M4.8 9A8 8 0 1 1 4 15",
+  "forward-10": "M15 5h5v5M19.2 9A8 8 0 1 0 20 15",
 };
 
 export function Icon({ name, size = 20 }: { name: Name; size?: number }) {
@@ -46,6 +54,19 @@ export function Icon({ name, size = 20 }: { name: Name; size?: number }) {
       aria-hidden="true"
     >
       <path d={paths[name]} />
+      {(name === "back-10" || name === "forward-10") && (
+        <text
+          x="12"
+          y="15"
+          fill="currentColor"
+          stroke="none"
+          fontSize="7"
+          fontWeight="700"
+          textAnchor="middle"
+        >
+          10
+        </text>
+      )}
     </svg>
   );
 }

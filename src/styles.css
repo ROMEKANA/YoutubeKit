@@ -1170,6 +1170,20 @@ small {
   height: 100%;
   min-height: 200px;
 }
+.player-transport {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+.player-control-button {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--green);
+}
+.player-control-button:hover:not(:disabled) {
+  border-color: #bac9bd;
+}
 .player-status {
   font-size: 12px;
   line-height: 1.8;
