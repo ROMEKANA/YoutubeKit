@@ -17,3 +17,11 @@ it("終了イベントの重複や未再生の最終項目で二重処理しな�
   expect(tracker.observe(0, 0)).toBeNull();
   expect(tracker.observe(1, 3)).toBeNull();
 });
+
+it("途中の動画番号から開始しても最終動画で完了する", () => {
+  const tracker = new PlaylistTracker(3);
+  expect(tracker.observe(1, 1)).toBe("playing");
+  expect(tracker.observe(0, 1)).toBeNull();
+  expect(tracker.observe(1, 2)).toBe("playing");
+  expect(tracker.observe(0, 2)).toBe("complete");
+});

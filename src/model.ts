@@ -22,10 +22,12 @@ export interface SavedQueue {
   id: string;
   name: string;
   videoIds: string[];
+  resumeVideoId: string | null;
 }
 
 export interface SavedState {
   queue: string[];
+  resumeVideoId: string | null;
   savedQueues: SavedQueue[];
   hidden: string[];
   settings: Settings;
@@ -45,6 +47,7 @@ export const defaultSettings: Settings = {
 export function restoreState(raw: string | null): SavedState {
   const empty = {
     queue: [],
+    resumeVideoId: null,
     savedQueues: [],
     hidden: [],
     settings: { ...defaultSettings },
@@ -53,14 +56,13 @@ export function restoreState(raw: string | null): SavedState {
   try {
     const value = JSON.parse(raw);
     if (!value || typeof value !== "object") return empty;
+    const videoId = (input: unknown): string | null =>
+      typeof input === "string" && /^[\w-]{11}$/.test(input) ? input : null;
     const ids = (list: unknown): string[] =>
       Array.isArray(list)
         ? [
             ...new Set(
-              list.filter(
-                (id): id is string =>
-                  typeof id === "string" && /^[\w-]{11}$/.test(id),
-              ),
+              list.filter((id): id is string => videoId(id) !== null),
             ),
           ]
         : [];
@@ -92,7 +94,14 @@ export function restoreState(raw: string | null): SavedState {
           )
             return [];
           savedQueueIds.add(id);
-          return [{ id, name, videoIds }];
+          return [
+            {
+              id,
+              name,
+              videoIds,
+              resumeVideoId: videoId(candidate.resumeVideoId),
+            },
+          ];
         })
       : [];
     // 旧3段階の表示設定を近い倍率へ移し、保存済みキューはそのまま引き継ぐ。
@@ -112,6 +121,7 @@ export function restoreState(raw: string | null): SavedState {
         : legacyDensity;
     return {
       queue: ids(value.queue),
+      resumeVideoId: videoId(value.resumeVideoId),
       savedQueues,
       hidden: ids(value.hidden),
       settings: {
@@ -151,6 +161,27 @@ export function appendQueue(queue: string[], videoIds: string[]): string[] {
     result.push(id);
   }
   return result;
+}
+
+// 保存キューに再開動画があれば履歴を上書きし、旧保存形式などでなければ現在値を維持する。
+export function mergeSavedQueue(
+  queue: string[],
+  resumeVideoId: string | null,
+  savedQueue: SavedQueue,
+): { queue: string[]; resumeVideoId: string | null } {
+  return {
+    queue: appendQueue(queue, savedQueue.videoIds),
+    resumeVideoId: savedQueue.resumeVideoId ?? resumeVideoId,
+  };
+}
+
+// 最後に再生した動画が現在のキューに含まれる場合だけ、その位置から開始する。
+export function getQueueStartIndex(
+  queue: string[],
+  resumeVideoId: string | null,
+): number {
+  const index = resumeVideoId ? queue.indexOf(resumeVideoId) : -1;
+  return index >= 0 ? index : 0;
 }
 
 // キューの操作は動画ID単位に行い、非表示状態とは独立させる。

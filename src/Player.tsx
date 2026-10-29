@@ -13,13 +13,14 @@ interface Props {
   videos: Video[];
   active: boolean;
   onClose: () => void;
+  onCurrentVideoChange?: (videoId: string) => void;
   onSaveQueue?: () => void;
   testMode?: boolean;
   ref?: Ref<PlayerHandle>;
 }
 
 export interface PlayerHandle {
-  startFirst: () => boolean;
+  startAt: (position: number) => boolean;
   endSession: () => void;
   togglePlayback: () => "playing" | "paused" | null;
 }
@@ -29,6 +30,7 @@ export function Player({
   videos,
   active,
   onClose,
+  onCurrentVideoChange,
   onSaveQueue,
   testMode = false,
   ref,
@@ -43,29 +45,33 @@ export function Player({
   const [attempt, setAttempt] = useState(0);
   const tracker = useRef(new PlaylistTracker(videos.length));
   const queueReady = useRef(false);
-  const startRequested = useRef(false);
+  const startPositionRequested = useRef<number | null>(null);
+  const onCurrentVideoChangeRef = useRef(onCurrentVideoChange);
+  onCurrentVideoChangeRef.current = onCurrentVideoChange;
 
   // 推測した状態ではなく公式プレーヤーの現在状態で切り替え、完了後は再開しない。
   useImperativeHandle(
     ref,
     () => ({
-      startFirst() {
-        startRequested.current = true;
+      startAt(position) {
+        const startPosition =
+          position >= 0 && position < videos.length ? position : 0;
+        startPositionRequested.current = startPosition;
         const instance = player.current;
         if (!instance || !queueReady.current || error) {
-          setStatus("先頭動画を再生する準備をしています…");
+          setStatus(`${startPosition + 1}本目を再生する準備をしています…`);
           return false;
         }
-        startRequested.current = false;
+        startPositionRequested.current = null;
         tracker.current = new PlaylistTracker(videos.length);
         setComplete(false);
-        setIndex(0);
-        setStatus("先頭の動画を再生します…");
-        instance.playVideoAt(0);
+        setIndex(startPosition);
+        setStatus(`${startPosition + 1}本目を最初から再生します…`);
+        instance.playVideoAt(startPosition);
         return true;
       },
       endSession() {
-        startRequested.current = false;
+        startPositionRequested.current = null;
         player.current?.pauseVideo();
         setStatus("キュー再生を終了しました。");
       },
@@ -91,7 +97,7 @@ export function Player({
     let readyTimer: number | undefined;
     let playerReady = false;
     queueReady.current = false;
-    startRequested.current = false;
+    startPositionRequested.current = null;
     tracker.current = new PlaylistTracker(videos.length);
     setReady(false);
     setComplete(false);
@@ -104,13 +110,15 @@ export function Player({
         setStatus("画面に戻ったら「再開」を押してください。");
       } else if (
         playerReady &&
-        startRequested.current &&
+        startPositionRequested.current !== null &&
         queueReady.current &&
         instance
       ) {
-        startRequested.current = false;
-        setStatus("先頭の動画を再生します…");
-        instance.playVideoAt(0);
+        const startPosition = startPositionRequested.current;
+        startPositionRequested.current = null;
+        setIndex(startPosition);
+        setStatus(`${startPosition + 1}本目を最初から再生します…`);
+        instance.playVideoAt(startPosition);
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -154,10 +162,15 @@ export function Player({
               if (disposed) return;
               if (event.data === 5) {
                 queueReady.current = true;
-                if (startRequested.current && !document.hidden) {
-                  startRequested.current = false;
-                  setStatus("先頭の動画を再生します…");
-                  event.target.playVideoAt(0);
+                if (
+                  startPositionRequested.current !== null &&
+                  !document.hidden
+                ) {
+                  const startPosition = startPositionRequested.current;
+                  startPositionRequested.current = null;
+                  setIndex(startPosition);
+                  setStatus(`${startPosition + 1}本目を最初から再生します…`);
+                  event.target.playVideoAt(startPosition);
                 } else setStatus("再生を開始できます。");
                 return;
               }
@@ -165,6 +178,9 @@ export function Player({
               const action = tracker.current.observe(event.data, current);
               if (action === "playing") {
                 setIndex(current);
+                const currentVideo = videos[current];
+                if (currentVideo)
+                  onCurrentVideoChangeRef.current?.(currentVideo.id);
                 setError("");
                 setStatus("再生中");
                 if (document.hidden) event.target.pauseVideo();
@@ -230,7 +246,7 @@ export function Player({
       position >= videos.length
     )
       return;
-    startRequested.current = false;
+    startPositionRequested.current = null;
     if (complete) {
       tracker.current = new PlaylistTracker(videos.length);
       setComplete(false);

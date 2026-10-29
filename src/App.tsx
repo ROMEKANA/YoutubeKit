@@ -9,14 +9,15 @@ import {
 import { flushSync } from "react-dom";
 import { version as appVersion } from "../package.json";
 import {
-  appendQueue,
   createSavedQueueId,
+  getQueueStartIndex,
   toggleQueueItem,
   isExcludedByDuration,
   formatDuration,
   formatPublishedAt,
   readWarningDismissal,
   moveItem,
+  mergeSavedQueue,
   restoreState,
   storageKey,
   type Settings,
@@ -313,7 +314,7 @@ function CatalogApp({
   function clearQueue() {
     if (!saved.queue.length) return;
     if (!window.confirm("再生キューをすべて削除しますか？")) return;
-    setSaved((state) => ({ ...state, queue: [] }));
+    setSaved((state) => ({ ...state, queue: [], resumeVideoId: null }));
     setToast("再生キューをすべて削除しました");
   }
 
@@ -365,6 +366,7 @@ function CatalogApp({
           id: createSavedQueueId(),
           name,
           videoIds: [...saveQueueVideoIds],
+          resumeVideoId: state.resumeVideoId,
         },
       ],
     }));
@@ -375,12 +377,20 @@ function CatalogApp({
   function appendSavedQueue(id: string) {
     const selected = saved.savedQueues.find((item) => item.id === id);
     if (!selected) return;
-    const nextQueue = appendQueue(saved.queue, selected.videoIds);
-    const addedCount = nextQueue.length - saved.queue.length;
-    setSaved((state) => ({
-      ...state,
-      queue: appendQueue(state.queue, selected.videoIds),
-    }));
+    const next = mergeSavedQueue(
+      saved.queue,
+      saved.resumeVideoId,
+      selected,
+    );
+    const addedCount = next.queue.length - saved.queue.length;
+    setSaved((state) => {
+      const merged = mergeSavedQueue(
+        state.queue,
+        state.resumeVideoId,
+        selected,
+      );
+      return { ...state, ...merged };
+    });
     setPanel(null);
     setToast(
       addedCount
@@ -403,12 +413,16 @@ function CatalogApp({
 
   function startPlayback() {
     if (!canPlay) return;
+    const startIndex = getQueueStartIndex(
+      saved.queue,
+      saved.resumeVideoId,
+    );
     // 準備済みプレーヤーを同じタップ処理内で表示し、iPhoneの再生許可を維持する。
     flushSync(() => {
       setPanel(null);
       setSession(playableQueue);
     });
-    playerHandle.current?.startFirst();
+    playerHandle.current?.startAt(startIndex);
     window.scrollTo({ top: 0 });
   }
 
@@ -556,6 +570,13 @@ function CatalogApp({
             active={!!session}
             videos={session ?? playableQueue}
             onClose={endPlayback}
+            onCurrentVideoChange={(videoId) =>
+              setSaved((state) =>
+                state.resumeVideoId === videoId
+                  ? state
+                  : { ...state, resumeVideoId: videoId },
+              )
+            }
             onSaveQueue={() =>
               openSaveQueue(
                 (session ?? playableQueue).map((video) => video.id),

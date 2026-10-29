@@ -5,7 +5,9 @@ import {
   createSavedQueueId,
   defaultSettings,
   formatDuration,
+  getQueueStartIndex,
   moveItem,
+  mergeSavedQueue,
   parseVideos,
   restoreState,
   toggleQueueItem,
@@ -57,6 +59,35 @@ describe("キューと保存データ", () => {
       ),
     ).toEqual(["aqz-KE-bpKQ", "eRsGyueVLvQ", "R6MlUcmOul8"]);
   });
+  it("最後に再生した動画が現在のキューにある場合だけ、その位置から開始する", () => {
+    const queue = ["aqz-KE-bpKQ", "eRsGyueVLvQ", "R6MlUcmOul8"];
+    expect(getQueueStartIndex(queue, "eRsGyueVLvQ")).toBe(1);
+    expect(getQueueStartIndex(queue, "9bZkp7q19f0")).toBe(0);
+    expect(getQueueStartIndex(queue, null)).toBe(0);
+  });
+  it("保存キューの再開動画がある場合だけ、現在の履歴を上書きする", () => {
+    const currentQueue = ["aqz-KE-bpKQ"];
+    const base = {
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      name: "保存キュー",
+      videoIds: ["eRsGyueVLvQ"],
+    };
+    expect(
+      mergeSavedQueue(currentQueue, "aqz-KE-bpKQ", {
+        ...base,
+        resumeVideoId: "eRsGyueVLvQ",
+      }),
+    ).toEqual({
+      queue: ["aqz-KE-bpKQ", "eRsGyueVLvQ"],
+      resumeVideoId: "eRsGyueVLvQ",
+    });
+    expect(
+      mergeSavedQueue(currentQueue, "aqz-KE-bpKQ", {
+        ...base,
+        resumeVideoId: null,
+      }).resumeVideoId,
+    ).toBe("aqz-KE-bpKQ");
+  });
   it("保存キュー用にUUIDを生成する", () => {
     expect(createSavedQueueId()).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -69,11 +100,13 @@ describe("キューと保存データ", () => {
   it("キュー・非表示・設定を保存形式から復元する", () => {
     const data = {
       queue: ["aqz-KE-bpKQ"],
+      resumeVideoId: "aqz-KE-bpKQ",
       savedQueues: [
         {
           id: "550e8400-e29b-41d4-a716-446655440000",
           name: "あとで見る",
           videoIds: ["aqz-KE-bpKQ"],
+          resumeVideoId: "aqz-KE-bpKQ",
         },
       ],
       hidden: ["aqz-KE-bpKQ"],
@@ -101,6 +134,7 @@ describe("キューと保存データ", () => {
             id: "550e8400-e29b-41d4-a716-446655440000",
             name: "同じ名前",
             videoIds: ["aqz-KE-bpKQ"],
+            resumeVideoId: "aqz-KE-bpKQ",
           },
           {
             id: "550e8400-e29b-41d4-a716-446655440001",
@@ -115,6 +149,10 @@ describe("キューと保存データ", () => {
     expect(savedQueues.map((queue) => queue.name)).toEqual([
       "同じ名前",
       "同じ名前",
+    ]);
+    expect(savedQueues.map((queue) => queue.resumeVideoId)).toEqual([
+      "aqz-KE-bpKQ",
+      null,
     ]);
   });
   it("合計時間を秒切り捨てせず表示する", () => {
