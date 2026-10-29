@@ -356,7 +356,9 @@ function CatalogApp({
               Youtube<span className="brand-light">Kit</span>
             </span>
           </a>
-          <span className="prototype-badge">PROTOTYPE</span>
+          <span className="prototype-badge" hidden>
+            PROTOTYPE
+          </span>
           <div className="header-actions">
             <button
               className={`icon-button ${loading ? "spinning" : ""}`}
@@ -405,7 +407,6 @@ function CatalogApp({
             <button
               className="icon-button"
               aria-label="設定"
-              disabled={!!session}
               onClick={() => setPanel("settings")}
             >
               <Icon name="settings" />
@@ -452,7 +453,7 @@ function CatalogApp({
           />
         ) : (
           <>
-            <div className="demo-banner">
+            <div className="demo-banner" hidden>
               <span className="status-dot" />
               <p>
                 {catalog.checking
@@ -655,16 +656,31 @@ function CatalogApp({
                   )
                 )}
               </section>
-              <aside className="queue-aside">
+              <aside
+                className="queue-aside"
+                role="button"
+                tabIndex={0}
+                aria-label={`再生キューの詳細を開く（${saved.queue.length}本、合計${formatDuration(queueSeconds, true)}）`}
+                onClick={() => setPanel("queue")}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setPanel("queue");
+                  }
+                }}
+              >
                 <div className="aside-heading">
                   <Icon name="list" />
-                  <h2>あなたのキュー</h2>
+                  <h2>再生キュー</h2>
+                  <small className="queue-total">
+                    合計 {formatDuration(queueSeconds, true)}
+                  </small>
                   <span>{saved.queue.length}</span>
                 </div>
                 {saved.queue.length ? (
                   <>
                     <ol className="queue-preview">
-                      {queueVideos.slice(0, 3).map((video, index) => (
+                      {queueVideos.slice(0, 30).map((video, index) => (
                         <li key={saved.queue[index]}>
                           <span>{String(index + 1).padStart(2, "0")}</span>
                           <div>
@@ -678,18 +694,19 @@ function CatalogApp({
                         </li>
                       ))}
                     </ol>
-                    {saved.queue.length > 3 && (
-                      <p className="muted">ほか {saved.queue.length - 3} 本</p>
+                    {saved.queue.length > 30 && (
+                      <p className="muted">ほか {saved.queue.length - 30} 本</p>
                     )}
                     <button
                       className="secondary full-width"
+                      hidden
                       onClick={() => setPanel("queue")}
                     >
                       キューを確認する
                     </button>
                   </>
                 ) : (
-                  <div className="aside-empty">
+                  <div className="aside-empty" hidden>
                     <div className="empty-plus">
                       <Icon name="plus" size={26} />
                     </div>
@@ -701,7 +718,7 @@ function CatalogApp({
                     </small>
                   </div>
                 )}
-                <div className="aside-note">
+                <div className="aside-note" hidden>
                   <span className="status-dot" />
                   <p>
                     選んだ動画が終わったら、
@@ -952,6 +969,117 @@ function CatalogApp({
 
       {panel === "settings" && (
         <Modal title="設定" onClose={() => setPanel(null)}>
+          <div className="settings-section settings-list">
+            <h3>動画一覧</h3>
+            <label className="setting-row">
+              <span>表示密度</span>
+              <select
+                value={settings.densityPercent}
+                onChange={(event) =>
+                  updateSettings({
+                    densityPercent: Number(event.target.value),
+                  })
+                }
+              >
+                {Array.from({ length: 20 }, (_, index) => (index + 1) * 10).map(
+                  (percent) => (
+                    <option key={percent} value={percent}>
+                      {percent}%{percent === 100 ? "（標準）" : ""}
+                    </option>
+                  ),
+                )}
+              </select>
+            </label>
+            <p className="panel-note" hidden>
+              100%が標準です。大きいほど画像・文字・行間を広げます。押しやすさと読みやすさのため最小サイズを設けています。
+            </p>
+            <label className="setting-row">
+              <span>初回表示件数</span>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={settings.initialCount}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isInteger(value) && value >= 1 && value <= 100)
+                    updateSettings({ initialCount: value });
+                }}
+              />
+            </label>
+            <label className="setting-row">
+              <span>追加表示件数</span>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={settings.additionalCount}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isInteger(value) && value >= 1 && value <= 100)
+                    updateSettings({ additionalCount: value });
+                }}
+              />
+            </label>
+          </div>
+          <div className="settings-section">
+            <h3>短い動画の除外</h3>
+            <label className="setting-row">
+              <span>時間で除外する</span>
+              <input
+                type="checkbox"
+                checked={settings.excludeShort}
+                onChange={(event) =>
+                  updateSettings({ excludeShort: event.target.checked })
+                }
+              />
+            </label>
+            <label className="setting-row">
+              <span>除外する分数（以下）</span>
+              <input
+                type="number"
+                min={1 / 60}
+                max="60"
+                step="any"
+                disabled={!settings.excludeShort}
+                value={settings.shortThreshold / 60}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  if (Number.isFinite(value) && value >= 1 / 60 && value <= 60)
+                    updateSettings({
+                      shortThreshold: Math.round(value * 60),
+                    });
+                }}
+              />
+            </label>
+            <p className="panel-note" hidden>
+              初期値は3分です。Shortsだけの正確な判別はできないため、通常の短い動画も除外されます。
+            </p>
+          </div>
+          <div className="settings-section">
+            <h3>シアターモード</h3>
+            <label className="theater-brightness">
+              表示の明るさ <output>{settings.theaterBrightness}%</output>
+              <input
+                type="range"
+                min="1"
+                max="100"
+                step="1"
+                value={settings.theaterBrightness}
+                onChange={(event) =>
+                  updateSettings({
+                    theaterBrightness: Number(event.target.value),
+                  })
+                }
+              />
+            </label>
+            <p className="panel-note theater-instructions" hidden>
+              更新と目の間のアイコンを押すと、確認なしでページ全体をこの明るさにします。プレーヤーを含む画面全体のタップをガードし、トリプルタップで一時停止、3秒長押しで解除します。再開や通常操作は解除後に行ってください。
+            </p>
+            <p className="panel-note" hidden>
+              本体の輝度やSafariのアドレスバーは変更できません。省電力にはコントロールセンターで本体の明るさも下げてください。自動ロック防止は端末が許可する場合だけ有効です。画面ロック中やバックグラウンドでの再生には対応しません。
+            </p>
+          </div>
           <div className="connection-card">
             <span className="tag">
               {catalog.auth?.authenticated
@@ -961,7 +1089,7 @@ function CatalogApp({
                   : "未接続"}
             </span>
             <h3>{catalog.auth?.account?.email ?? "Googleアカウント未接続"}</h3>
-            <p>
+            <p hidden={!!catalog.auth?.authenticated}>
               {catalog.auth?.authenticated
                 ? "登録チャンネルと動画情報はサーバーに保存されます。キュー・非表示・設定は、この段階ではブラウザごとの保存です。"
                 : catalog.backendOffline
@@ -1026,7 +1154,7 @@ function CatalogApp({
               )}
             </div>
             {catalog.watermark && (
-              <p className="panel-note">
+              <p className="panel-note" hidden>
                 次回更新の基準:{" "}
                 {new Date(catalog.watermark * 1000).toLocaleString("ja-JP")}
               </p>
@@ -1043,131 +1171,31 @@ function CatalogApp({
             )}
             {catalog.issues.length > 0 && <SyncWarnings catalog={catalog} />}
           </div>
-          <div className="settings-section">
-            <h3>動画一覧</h3>
-            <label className="setting-row">
-              <span>表示密度</span>
-              <select
-                value={settings.densityPercent}
-                onChange={(event) =>
-                  updateSettings({
-                    densityPercent: Number(event.target.value),
-                  })
-                }
-              >
-                {Array.from({ length: 20 }, (_, index) => (index + 1) * 10).map(
-                  (percent) => (
-                    <option key={percent} value={percent}>
-                      {percent}%{percent === 100 ? "（標準）" : ""}
-                    </option>
-                  ),
-                )}
-              </select>
-            </label>
-            <p className="panel-note">
-              100%が標準です。大きいほど画像・文字・行間を広げます。押しやすさと読みやすさのため最小サイズを設けています。
-            </p>
-            <label className="setting-row">
-              <span>初回表示件数</span>
-              <input
-                type="number"
-                min="1"
-                max="100"
-                value={settings.initialCount}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (Number.isInteger(value) && value >= 1 && value <= 100)
-                    updateSettings({ initialCount: value });
-                }}
-              />
-            </label>
-            <label className="setting-row">
-              <span>追加表示件数</span>
-              <input
-                type="number"
-                min="1"
-                max="100"
-                value={settings.additionalCount}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (Number.isInteger(value) && value >= 1 && value <= 100)
-                    updateSettings({ additionalCount: value });
-                }}
-              />
-            </label>
-          </div>
-          <div className="settings-section">
-            <h3>短い動画の除外</h3>
-            <label className="setting-row">
-              <span>時間で除外する</span>
-              <input
-                type="checkbox"
-                checked={settings.excludeShort}
-                onChange={(event) =>
-                  updateSettings({ excludeShort: event.target.checked })
-                }
-              />
-            </label>
-            <label className="setting-row">
-              <span>除外する分数（以下）</span>
-              <input
-                type="number"
-                min={1 / 60}
-                max="60"
-                step="any"
-                disabled={!settings.excludeShort}
-                value={settings.shortThreshold / 60}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (Number.isFinite(value) && value >= 1 / 60 && value <= 60)
-                    updateSettings({
-                      shortThreshold: Math.round(value * 60),
-                    });
-                }}
-              />
-            </label>
-            <p className="panel-note">
-              初期値は3分です。Shortsだけの正確な判別はできないため、通常の短い動画も除外されます。
-            </p>
-          </div>
-          <div className="settings-section">
-            <h3>シアターモード</h3>
-            <label className="theater-brightness">
-              表示の明るさ <output>{settings.theaterBrightness}%</output>
-              <input
-                type="range"
-                min="1"
-                max="100"
-                step="1"
-                value={settings.theaterBrightness}
-                onChange={(event) =>
-                  updateSettings({
-                    theaterBrightness: Number(event.target.value),
-                  })
-                }
-              />
-            </label>
-            <p className="panel-note theater-instructions">
-              更新と目の間のアイコンを押すと、確認なしでページ全体をこの明るさにします。プレーヤーを含む画面全体のタップをガードし、トリプルタップで一時停止、3秒長押しで解除します。再開や通常操作は解除後に行ってください。
-            </p>
-            <p className="panel-note">
-              本体の輝度やSafariのアドレスバーは変更できません。省電力にはコントロールセンターで本体の明るさも下げてください。自動ロック防止は端末が許可する場合だけ有効です。画面ロック中やバックグラウンドでの再生には対応しません。
-            </p>
-          </div>
-          <div className="settings-section">
+          <div className="settings-section settings-app">
             <h3>アプリとホーム画面</h3>
             <p className="panel-note">
-              iPhoneはSafariの共有から「ホーム画面に追加」を選びます。追加後はホーム画面から開いてGoogleへ接続してください。
+              iPhoneはSafariの共有から「ホーム画面に追加」を選びます。
+              <span hidden>
+                追加後はホーム画面から開いてGoogleへ接続してください。
+              </span>
             </p>
-            <p className="panel-note">
+            <p className="panel-note" hidden>
               キューと設定はこの端末内に保存します。動画の取得・再生には通信が必要です。
             </p>
-            <p className="panel-note">
+            <p className="panel-note" hidden>
               {pwa.enabled
                 ? pwa.installed
                   ? "アプリ本体をこの端末に保存済みです。"
                   : "アプリ本体をこの端末に保存しています。"
                 : "ホーム画面からの起動とアプリ更新は公開URLで確認できます。"}
+            </p>
+            <p className="app-version">
+              {pwa.enabled
+                ? pwa.installed
+                  ? "アプリを保存済み"
+                  : "アプリを保存中"
+                : "アプリ"}{" "}
+              v{appVersion}
             </p>
             {pwa.enabled && (
               <button
@@ -1187,7 +1215,7 @@ function CatalogApp({
                 {pwa.message}
               </p>
             )}
-            <p className="panel-note">
+            <p className="panel-note" hidden>
               v{appVersion} ·
               キュー・非表示・表示設定の端末間同期は後の段階です。
             </p>
