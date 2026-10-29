@@ -10,7 +10,7 @@ import { flushSync } from "react-dom";
 import { version as appVersion } from "../package.json";
 import {
   createSavedQueueId,
-  getQueueStartIndex,
+  getQueueStart,
   toggleQueueItem,
   isExcludedByDuration,
   formatDuration,
@@ -18,6 +18,8 @@ import {
   readWarningDismissal,
   moveItem,
   mergeSavedQueue,
+  playbackSaveIntervals,
+  selectPlaybackPositions,
   restoreState,
   storageKey,
   type Settings,
@@ -314,7 +316,12 @@ function CatalogApp({
   function clearQueue() {
     if (!saved.queue.length) return;
     if (!window.confirm("再生キューをすべて削除しますか？")) return;
-    setSaved((state) => ({ ...state, queue: [], resumeVideoId: null }));
+    setSaved((state) => ({
+      ...state,
+      queue: [],
+      resumeVideoId: null,
+      playbackPositions: {},
+    }));
     setToast("再生キューをすべて削除しました");
   }
 
@@ -367,6 +374,10 @@ function CatalogApp({
           name,
           videoIds: [...saveQueueVideoIds],
           resumeVideoId: state.resumeVideoId,
+          playbackPositions: selectPlaybackPositions(
+            state.playbackPositions,
+            saveQueueVideoIds,
+          ),
         },
       ],
     }));
@@ -380,6 +391,7 @@ function CatalogApp({
     const next = mergeSavedQueue(
       saved.queue,
       saved.resumeVideoId,
+      saved.playbackPositions,
       selected,
     );
     const addedCount = next.queue.length - saved.queue.length;
@@ -387,6 +399,7 @@ function CatalogApp({
       const merged = mergeSavedQueue(
         state.queue,
         state.resumeVideoId,
+        state.playbackPositions,
         selected,
       );
       return { ...state, ...merged };
@@ -413,16 +426,17 @@ function CatalogApp({
 
   function startPlayback() {
     if (!canPlay) return;
-    const startIndex = getQueueStartIndex(
+    const start = getQueueStart(
       saved.queue,
       saved.resumeVideoId,
+      saved.playbackPositions,
     );
     // 準備済みプレーヤーを同じタップ処理内で表示し、iPhoneの再生許可を維持する。
     flushSync(() => {
       setPanel(null);
       setSession(playableQueue);
     });
-    playerHandle.current?.startAt(startIndex);
+    playerHandle.current?.startAt(start.index, start.positionSeconds);
     window.scrollTo({ top: 0 });
   }
 
@@ -569,13 +583,24 @@ function CatalogApp({
             ref={playerHandle}
             active={!!session}
             videos={session ?? playableQueue}
+            playbackPositions={saved.playbackPositions}
+            saveIntervalSeconds={settings.playbackSaveIntervalSeconds}
+            resumePlaybackPosition={settings.resumePlaybackPosition}
             onClose={endPlayback}
-            onCurrentVideoChange={(videoId) =>
-              setSaved((state) =>
-                state.resumeVideoId === videoId
-                  ? state
-                  : { ...state, resumeVideoId: videoId },
-              )
+            onPlaybackProgress={(videoId, positionSeconds) =>
+              setSaved((state) => {
+                const previousPosition = state.playbackPositions[videoId] ?? 0;
+                if (
+                  state.resumeVideoId === videoId &&
+                  previousPosition === positionSeconds
+                )
+                  return state;
+                const playbackPositions = { ...state.playbackPositions };
+                if (positionSeconds > 0)
+                  playbackPositions[videoId] = positionSeconds;
+                else delete playbackPositions[videoId];
+                return { ...state, resumeVideoId: videoId, playbackPositions };
+              })
             }
             onSaveQueue={() =>
               openSaveQueue(
@@ -1275,6 +1300,43 @@ function CatalogApp({
             </label>
             <p className="panel-note" hidden>
               初期値は3分です。Shortsだけの正確な判別はできないため、通常の短い動画も除外されます。
+            </p>
+          </div>
+          <div className="settings-section">
+            <h3>再生位置</h3>
+            <label className="setting-row">
+              <span>途中から再生する</span>
+              <input
+                type="checkbox"
+                checked={settings.resumePlaybackPosition}
+                onChange={(event) =>
+                  updateSettings({
+                    resumePlaybackPosition: event.target.checked,
+                  })
+                }
+              />
+            </label>
+            <label className="setting-row">
+              <span>保存間隔</span>
+              <select
+                value={settings.playbackSaveIntervalSeconds}
+                onChange={(event) =>
+                  updateSettings({
+                    playbackSaveIntervalSeconds: Number(event.target.value),
+                  })
+                }
+              >
+                {playbackSaveIntervals.map((seconds) => (
+                  <option key={seconds} value={seconds}>
+                    {seconds === 0
+                      ? "なし（切替・終了時のみ）"
+                      : `${seconds}秒`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="panel-note">
+              再生位置の記録と最後に再生した動画IDの保存は常に有効です。オフにすると保存位置を使わず最初から再生します。本家YouTubeの視聴位置とは同期しません。
             </p>
           </div>
           <div className="settings-section">

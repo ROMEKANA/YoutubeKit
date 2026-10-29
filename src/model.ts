@@ -16,6 +16,8 @@ export interface Settings {
   excludeShort: boolean;
   shortThreshold: number;
   theaterBrightness: number;
+  playbackSaveIntervalSeconds: number;
+  resumePlaybackPosition: boolean;
 }
 
 export interface SavedQueue {
@@ -23,17 +25,20 @@ export interface SavedQueue {
   name: string;
   videoIds: string[];
   resumeVideoId: string | null;
+  playbackPositions: Record<string, number>;
 }
 
 export interface SavedState {
   queue: string[];
   resumeVideoId: string | null;
+  playbackPositions: Record<string, number>;
   savedQueues: SavedQueue[];
   hidden: string[];
   settings: Settings;
 }
 
 export const storageKey = "youtubekit.prototype.v1";
+export const playbackSaveIntervals = [0, 1, 2, 3, 5, 10, 36, 60] as const;
 export const defaultSettings: Settings = {
   densityPercent: 100,
   initialCount: 30,
@@ -41,6 +46,8 @@ export const defaultSettings: Settings = {
   excludeShort: true,
   shortThreshold: 180,
   theaterBrightness: 20,
+  playbackSaveIntervalSeconds: 5,
+  resumePlaybackPosition: true,
 };
 
 // 保存データが旧形式や破損状態でも、利用できる項目だけを復元する。
@@ -48,6 +55,7 @@ export function restoreState(raw: string | null): SavedState {
   const empty = {
     queue: [],
     resumeVideoId: null,
+    playbackPositions: {},
     savedQueues: [],
     hidden: [],
     settings: { ...defaultSettings },
@@ -58,6 +66,22 @@ export function restoreState(raw: string | null): SavedState {
     if (!value || typeof value !== "object") return empty;
     const videoId = (input: unknown): string | null =>
       typeof input === "string" && /^[\w-]{11}$/.test(input) ? input : null;
+    const playbackPosition = (input: unknown): number =>
+      typeof input === "number" &&
+      Number.isFinite(input) &&
+      input >= 0
+        ? Math.floor(input)
+        : 0;
+    const playbackPositions = (input: unknown): Record<string, number> => {
+      if (!input || typeof input !== "object" || Array.isArray(input))
+        return {};
+      return Object.fromEntries(
+        Object.entries(input).flatMap(([id, seconds]) => {
+          const position = playbackPosition(seconds);
+          return videoId(id) && position > 0 ? [[id, position]] : [];
+        }),
+      );
+    };
     const ids = (list: unknown): string[] =>
       Array.isArray(list)
         ? [
@@ -94,12 +118,20 @@ export function restoreState(raw: string | null): SavedState {
           )
             return [];
           savedQueueIds.add(id);
+          const resumeVideoId = videoId(candidate.resumeVideoId);
+          const positions = playbackPositions(candidate.playbackPositions);
+          const legacyPosition = playbackPosition(
+            candidate.resumePositionSeconds,
+          );
+          if (resumeVideoId && legacyPosition > 0 && !positions[resumeVideoId])
+            positions[resumeVideoId] = legacyPosition;
           return [
             {
               id,
               name,
               videoIds,
-              resumeVideoId: videoId(candidate.resumeVideoId),
+              resumeVideoId,
+              playbackPositions: selectPlaybackPositions(positions, videoIds),
             },
           ];
         })
@@ -119,9 +151,15 @@ export function restoreState(raw: string | null): SavedState {
       settings.densityPercent % 10 === 0
         ? settings.densityPercent
         : legacyDensity;
+    const resumeVideoId = videoId(value.resumeVideoId);
+    const positions = playbackPositions(value.playbackPositions);
+    const legacyPosition = playbackPosition(value.resumePositionSeconds);
+    if (resumeVideoId && legacyPosition > 0 && !positions[resumeVideoId])
+      positions[resumeVideoId] = legacyPosition;
     return {
       queue: ids(value.queue),
-      resumeVideoId: videoId(value.resumeVideoId),
+      resumeVideoId,
+      playbackPositions: positions,
       savedQueues,
       hidden: ids(value.hidden),
       settings: {
@@ -134,6 +172,17 @@ export function restoreState(raw: string | null): SavedState {
             : true,
         shortThreshold: number(settings.shortThreshold, 180, 3600),
         theaterBrightness: number(settings.theaterBrightness, 20, 100),
+        playbackSaveIntervalSeconds:
+          typeof settings.playbackSaveIntervalSeconds === "number" &&
+          playbackSaveIntervals.includes(
+            settings.playbackSaveIntervalSeconds as (typeof playbackSaveIntervals)[number],
+          )
+            ? settings.playbackSaveIntervalSeconds
+            : 5,
+        resumePlaybackPosition:
+          typeof settings.resumePlaybackPosition === "boolean"
+            ? settings.resumePlaybackPosition
+            : true,
       },
     };
   } catch {
@@ -163,25 +212,55 @@ export function appendQueue(queue: string[], videoIds: string[]): string[] {
   return result;
 }
 
+// 保存キューには対象動画のうち、途中位置があるものだけを含める。
+export function selectPlaybackPositions(
+  playbackPositions: Record<string, number>,
+  videoIds: string[],
+): Record<string, number> {
+  return Object.fromEntries(
+    videoIds.flatMap((id) => {
+      const seconds = playbackPositions[id];
+      return Number.isFinite(seconds) && seconds > 0
+        ? [[id, Math.floor(seconds)]]
+        : [];
+    }),
+  );
+}
+
 // 保存キューに再開動画があれば履歴を上書きし、旧保存形式などでなければ現在値を維持する。
 export function mergeSavedQueue(
   queue: string[],
   resumeVideoId: string | null,
+  playbackPositions: Record<string, number>,
   savedQueue: SavedQueue,
-): { queue: string[]; resumeVideoId: string | null } {
+): {
+  queue: string[];
+  resumeVideoId: string | null;
+  playbackPositions: Record<string, number>;
+} {
+  const replaceResume = savedQueue.resumeVideoId !== null;
+  const mergedPositions = { ...playbackPositions };
+  for (const id of savedQueue.videoIds) {
+    const seconds = savedQueue.playbackPositions[id];
+    if (seconds > 0) mergedPositions[id] = seconds;
+    else delete mergedPositions[id];
+  }
   return {
     queue: appendQueue(queue, savedQueue.videoIds),
-    resumeVideoId: savedQueue.resumeVideoId ?? resumeVideoId,
+    resumeVideoId: replaceResume ? savedQueue.resumeVideoId : resumeVideoId,
+    playbackPositions: mergedPositions,
   };
 }
 
 // 最後に再生した動画が現在のキューに含まれる場合だけ、その位置から開始する。
-export function getQueueStartIndex(
+export function getQueueStart(
   queue: string[],
   resumeVideoId: string | null,
-): number {
+  playbackPositions: Record<string, number>,
+): { index: number; positionSeconds: number } {
   const index = resumeVideoId ? queue.indexOf(resumeVideoId) : -1;
-  return index >= 0 ? index : 0;
+  if (index < 0 || !resumeVideoId) return { index: 0, positionSeconds: 0 };
+  return { index, positionSeconds: playbackPositions[resumeVideoId] ?? 0 };
 }
 
 // キューの操作は動画ID単位に行い、非表示状態とは独立させる。

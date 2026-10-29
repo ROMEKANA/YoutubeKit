@@ -29,6 +29,9 @@ export function Lab() {
       {started ? (
         <Player
           videos={samples}
+          playbackPositions={{}}
+          saveIntervalSeconds={0}
+          resumePlaybackPosition={false}
           active
           testMode
           onClose={() => setStarted(false)}

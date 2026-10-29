@@ -5,11 +5,13 @@ import {
   createSavedQueueId,
   defaultSettings,
   formatDuration,
-  getQueueStartIndex,
+  getQueueStart,
   moveItem,
   mergeSavedQueue,
+  playbackSaveIntervals,
   parseVideos,
   restoreState,
+  selectPlaybackPositions,
   toggleQueueItem,
   isExcludedByDuration,
   formatPublishedAt,
@@ -61,9 +63,18 @@ describe("キューと保存データ", () => {
   });
   it("最後に再生した動画が現在のキューにある場合だけ、その位置から開始する", () => {
     const queue = ["aqz-KE-bpKQ", "eRsGyueVLvQ", "R6MlUcmOul8"];
-    expect(getQueueStartIndex(queue, "eRsGyueVLvQ")).toBe(1);
-    expect(getQueueStartIndex(queue, "9bZkp7q19f0")).toBe(0);
-    expect(getQueueStartIndex(queue, null)).toBe(0);
+    expect(getQueueStart(queue, "eRsGyueVLvQ", { eRsGyueVLvQ: 123 })).toEqual({
+      index: 1,
+      positionSeconds: 123,
+    });
+    expect(getQueueStart(queue, "9bZkp7q19f0", {})).toEqual({
+      index: 0,
+      positionSeconds: 0,
+    });
+    expect(getQueueStart(queue, null, { "aqz-KE-bpKQ": 123 })).toEqual({
+      index: 0,
+      positionSeconds: 0,
+    });
   });
   it("保存キューの再開動画がある場合だけ、現在の履歴を上書きする", () => {
     const currentQueue = ["aqz-KE-bpKQ"];
@@ -71,22 +82,54 @@ describe("キューと保存データ", () => {
       id: "550e8400-e29b-41d4-a716-446655440000",
       name: "保存キュー",
       videoIds: ["eRsGyueVLvQ"],
+      playbackPositions: { eRsGyueVLvQ: 91 },
     };
     expect(
-      mergeSavedQueue(currentQueue, "aqz-KE-bpKQ", {
-        ...base,
-        resumeVideoId: "eRsGyueVLvQ",
-      }),
+      mergeSavedQueue(
+        currentQueue,
+        "aqz-KE-bpKQ",
+        { "aqz-KE-bpKQ": 45 },
+        {
+          ...base,
+          resumeVideoId: "eRsGyueVLvQ",
+        },
+      ),
     ).toEqual({
       queue: ["aqz-KE-bpKQ", "eRsGyueVLvQ"],
       resumeVideoId: "eRsGyueVLvQ",
+      playbackPositions: { "aqz-KE-bpKQ": 45, eRsGyueVLvQ: 91 },
     });
     expect(
-      mergeSavedQueue(currentQueue, "aqz-KE-bpKQ", {
-        ...base,
-        resumeVideoId: null,
-      }).resumeVideoId,
-    ).toBe("aqz-KE-bpKQ");
+      mergeSavedQueue(
+        currentQueue,
+        "aqz-KE-bpKQ",
+        { "aqz-KE-bpKQ": 45 },
+        {
+          ...base,
+          resumeVideoId: null,
+        },
+      ),
+    ).toEqual({
+      queue: ["aqz-KE-bpKQ", "eRsGyueVLvQ"],
+      resumeVideoId: "aqz-KE-bpKQ",
+      playbackPositions: { "aqz-KE-bpKQ": 45, eRsGyueVLvQ: 91 },
+    });
+  });
+  it("保存キューに位置がない動画は保存時点の先頭位置で上書きする", () => {
+    expect(
+      mergeSavedQueue(
+        ["aqz-KE-bpKQ"],
+        "aqz-KE-bpKQ",
+        { eRsGyueVLvQ: 91 },
+        {
+          id: "550e8400-e29b-41d4-a716-446655440000",
+          name: "保存キュー",
+          videoIds: ["eRsGyueVLvQ"],
+          resumeVideoId: "eRsGyueVLvQ",
+          playbackPositions: {},
+        },
+      ).playbackPositions,
+    ).toEqual({});
   });
   it("保存キュー用にUUIDを生成する", () => {
     expect(createSavedQueueId()).toMatch(
@@ -101,12 +144,14 @@ describe("キューと保存データ", () => {
     const data = {
       queue: ["aqz-KE-bpKQ"],
       resumeVideoId: "aqz-KE-bpKQ",
+      playbackPositions: { "aqz-KE-bpKQ": 83 },
       savedQueues: [
         {
           id: "550e8400-e29b-41d4-a716-446655440000",
           name: "あとで見る",
           videoIds: ["aqz-KE-bpKQ"],
           resumeVideoId: "aqz-KE-bpKQ",
+          playbackPositions: { "aqz-KE-bpKQ": 83 },
         },
       ],
       hidden: ["aqz-KE-bpKQ"],
@@ -125,6 +170,10 @@ describe("キューと保存データ", () => {
     expect(
       restoreState('{"settings":{"initialCount":-3}}').settings.initialCount,
     ).toBe(30);
+    expect(
+      restoreState('{"playbackPositions":{"aqz-KE-bpKQ":12.9,"broken":20}}')
+        .playbackPositions,
+    ).toEqual({ "aqz-KE-bpKQ": 12 });
   });
   it("同名の保存キューを別IDで保持し、不正な保存キューは除外する", () => {
     const savedQueues = restoreState(
@@ -135,6 +184,7 @@ describe("キューと保存データ", () => {
             name: "同じ名前",
             videoIds: ["aqz-KE-bpKQ"],
             resumeVideoId: "aqz-KE-bpKQ",
+            playbackPositions: { "aqz-KE-bpKQ": 12 },
           },
           {
             id: "550e8400-e29b-41d4-a716-446655440001",
@@ -154,6 +204,41 @@ describe("キューと保存データ", () => {
       "aqz-KE-bpKQ",
       null,
     ]);
+    expect(savedQueues.map((queue) => queue.playbackPositions)).toEqual([
+      { "aqz-KE-bpKQ": 12 },
+      {},
+    ]);
+  });
+  it("保存キューには対象動画の途中位置だけを取り込む", () => {
+    expect(
+      selectPlaybackPositions(
+        { "aqz-KE-bpKQ": 12, eRsGyueVLvQ: 0, R6MlUcmOul8: 33 },
+        ["aqz-KE-bpKQ", "eRsGyueVLvQ"],
+      ),
+    ).toEqual({ "aqz-KE-bpKQ": 12 });
+  });
+  it("再生位置の保存間隔は指定候補だけを復元する", () => {
+    for (const seconds of playbackSaveIntervals)
+      expect(
+        restoreState(
+          JSON.stringify({
+            settings: { playbackSaveIntervalSeconds: seconds },
+          }),
+        ).settings.playbackSaveIntervalSeconds,
+      ).toBe(seconds);
+    expect(
+      restoreState(
+        JSON.stringify({ settings: { playbackSaveIntervalSeconds: 4 } }),
+      ).settings.playbackSaveIntervalSeconds,
+    ).toBe(5);
+  });
+  it("途中から再生する設定はオンとオフを保存する", () => {
+    expect(
+      restoreState(
+        JSON.stringify({ settings: { resumePlaybackPosition: false } }),
+      ).settings.resumePlaybackPosition,
+    ).toBe(false);
+    expect(restoreState("{}").settings.resumePlaybackPosition).toBe(true);
   });
   it("合計時間を秒切り捨てせず表示する", () => {
     expect(formatDuration(3661, true)).toBe("1時間2分");
