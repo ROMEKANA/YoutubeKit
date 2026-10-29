@@ -680,6 +680,13 @@ small {
   background: #fff6df;
   border: 1px solid #e7d29a;
 }
+.app-update {
+  background: #edf3ea;
+  border: 1px solid #d5e0ce;
+}
+.app-update button {
+  margin-top: 8px;
+}
 .sync-warning summary {
   cursor: pointer;
   padding: 8px 0;

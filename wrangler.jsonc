@@ -47,6 +47,9 @@
   "env": {
     "production": {
       "name": "youtube-kit",
+      "account_id": "c281064300f46801991d8bde5a1ee45a",
+      "workers_dev": true,
+      "preview_urls": false,
       "triggers": { "crons": ["17 3 * * *"] },
       "secrets": {
         "required": [
@@ -56,10 +59,8 @@
         ],
       },
       "vars": {
-        // 本番URLと許可アカウントを設定してからデプロイする。
-        "APP_ORIGIN": "https://replace-before-deploy.invalid",
-        "ALLOWED_GOOGLE_EMAIL": "",
-        "ALLOWED_GOOGLE_SUB": "",
+        // 許可アカウントは公開設定に書かず、Workers Secretsで管理する。
+        "APP_ORIGIN": "https://youtube-kit.tokana2212.workers.dev",
         "ALLOW_DEMO": "false",
         "UPLOAD_PAGES_PER_CHANNEL": "2",
         "SYNC_OVERLAP_SECONDS": "600",
@@ -68,7 +69,7 @@
         {
           "binding": "DB",
           "database_name": "youtube-kit",
-          "database_id": "00000000-0000-0000-0000-000000000000",
+          "database_id": "7a86a8d6-a35d-4d84-b366-1aa5ffd7e3d3",
           "migrations_dir": "migrations",
         },
       ],

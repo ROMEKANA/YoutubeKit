@@ -21,6 +21,7 @@ import {
 import { Icon } from "./Icon";
 import { Player } from "./Player";
 import { useCatalog, type CatalogController } from "./useCatalog";
+import { usePwa, type PwaController } from "./usePwa";
 
 type Panel = "channels" | "queue" | "settings" | null;
 const thumbnail = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
@@ -114,7 +115,8 @@ function readInitialState(key: string) {
 // 一覧の選択状態と保存済みキューを管理し、開始操作で再生セッションを作る。
 export function App() {
   const catalog = useCatalog();
-  return <CatalogApp key={catalog.sourceKey} catalog={catalog} />;
+  const pwa = usePwa();
+  return <CatalogApp key={catalog.sourceKey} catalog={catalog} pwa={pwa} />;
 }
 
 // 取得できた一覧を使いながら、飛ばした対象と次の操作を確認できるようにする。
@@ -160,7 +162,13 @@ function SyncWarnings({
 }
 
 // サンプルと実アカウントで保存先を分け、キューや非表示状態を混在させない。
-function CatalogApp({ catalog }: { catalog: CatalogController }) {
+function CatalogApp({
+  catalog,
+  pwa,
+}: {
+  catalog: CatalogController;
+  pwa: PwaController;
+}) {
   const stateKey =
     catalog.sourceKey === "prototype"
       ? storageKey
@@ -381,6 +389,27 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
       </header>
 
       <main className={`main ${session ? "playing-main" : ""}`}>
+        {!pwa.online && (
+          <p className="notice sync-warning" role="status">
+            通信できません。動画の取得・再生にはインターネット接続が必要です。保存したキューと設定はこの端末に残っています。
+          </p>
+        )}
+        {pwa.updateReady && (
+          <div className="notice app-update" role="status">
+            <p>
+              {session
+                ? "アプリの新版があります。再生を終了すると更新できます。"
+                : "アプリの新版があります。キューと設定を引き継いで更新します。"}
+            </p>
+            <button
+              className="secondary"
+              disabled={!!session || loading || !pwa.online}
+              onClick={() => pwa.applyUpdate(!!session || loading)}
+            >
+              アプリを更新
+            </button>
+          </div>
+        )}
         {storageError && (
           <p className="notice error" role="alert">
             {storageError}
@@ -1060,10 +1089,41 @@ function CatalogApp({ catalog }: { catalog: CatalogController }) {
             </p>
           </div>
           <div className="settings-section">
-            <h3>この試作について</h3>
+            <h3>アプリとホーム画面</h3>
+            <p className="panel-note">
+              iPhoneはSafariの共有から「ホーム画面に追加」を選びます。追加後はホーム画面から開いてGoogleへ接続してください。
+            </p>
+            <p className="panel-note">
+              キューと設定はこの端末内に保存します。動画の取得・再生には通信が必要です。
+            </p>
+            <p className="panel-note">
+              {pwa.enabled
+                ? pwa.installed
+                  ? "アプリ本体をこの端末に保存済みです。"
+                  : "アプリ本体をこの端末に保存しています。"
+                : "ホーム画面からの起動とアプリ更新は公開URLで確認できます。"}
+            </p>
+            {pwa.enabled && (
+              <button
+                className="secondary"
+                onClick={() => void pwa.checkUpdate()}
+              >
+                アプリの更新を確認
+              </button>
+            )}
+            {pwa.updateReady && (
+              <p className="panel-note">
+                新版を検出しました。設定を閉じ、一覧上部の「アプリを更新」から適用できます。
+              </p>
+            )}
+            {pwa.message && (
+              <p className="notice error" role="alert">
+                {pwa.message}
+              </p>
+            )}
             <p className="panel-note">
               v{appVersion} ·
-              Google認証・登録チャンネル同期に対応しました。キューの端末間同期・PWAのインストールとオフライン更新は次の段階です。
+              キュー・非表示・表示設定の端末間同期は後の段階です。
             </p>
             <p className="panel-note">
               プレーヤーにはYouTubeの利用規約とプライバシーポリシーが適用されます。

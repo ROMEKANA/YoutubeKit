@@ -61,7 +61,8 @@ export async function acceptOwner(
   if (env.ALLOWED_GOOGLE_SUB) return sub === env.ALLOWED_GOOGLE_SUB;
   if (
     !emailVerified ||
-    email.toLowerCase() !== env.ALLOWED_GOOGLE_EMAIL.trim().toLowerCase()
+    email.toLowerCase() !==
+      (env.ALLOWED_GOOGLE_EMAIL ?? "").trim().toLowerCase()
   )
     return false;
   await env.DB.prepare(

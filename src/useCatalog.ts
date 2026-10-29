@@ -66,14 +66,23 @@ async function request(
   options: RequestInit = {},
   signal?: AbortSignal,
 ): Promise<unknown> {
-  const response = await fetch(path, {
-    ...options,
-    credentials: "same-origin",
-    cache: "no-store",
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(60000)])
-      : AbortSignal.timeout(60000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(60000)])
+        : AbortSignal.timeout(60000),
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ApiError(
+      "サーバーへ接続できません。インターネット接続を確認して再試行してください。",
+      "NETWORK_UNAVAILABLE",
+    );
+  }
   let data: unknown;
   try {
     data = await response.json();
@@ -377,7 +386,10 @@ export function useCatalog() {
         if (nextController.signal.aborted) return;
         const unavailable =
           reason instanceof TypeError ||
-          (reason instanceof ApiError && reason.code === "BACKEND_UNAVAILABLE");
+          (reason instanceof ApiError &&
+            ["BACKEND_UNAVAILABLE", "NETWORK_UNAVAILABLE"].includes(
+              reason.code,
+            ));
         if (
           !unavailable ||
           !["localhost", "127.0.0.1"].includes(window.location.hostname)
