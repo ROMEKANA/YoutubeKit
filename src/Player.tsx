@@ -126,7 +126,7 @@ export function Player({
   }
 
   // 終了した動画の位置を残し、次回の開始位置は終端設定で判断する。
-  function clearCompletedPlayback(position: number) {
+  function saveCompletedPlayback(position: number) {
     const video = videosRef.current[position];
     if (!video) return;
     const sample = { videoId: video.id, positionSeconds: Math.floor(video.durationSeconds) };
@@ -176,9 +176,12 @@ export function Player({
   // 通常画面の中央ボタンとシアターモードのトリプルタップで同じ切替処理を使う。
   function togglePlayerPlayback(): "playing" | "paused" | null {
     const instance = player.current;
-    if (!instance || !ready || complete || error) return null;
+    if (!instance || !ready || error) return null;
     const state = instance.getPlayerState();
-    if (state === 0) return null;
+    if (complete || state === 0) {
+      tracker.current = new PlaylistTracker(videosRef.current.length);
+      setComplete(false);
+    }
     if (state === 1 || state === 3) {
       instance.pauseVideo();
       setPlaying(false);
@@ -322,6 +325,7 @@ export function Player({
                 resumeCheckedVideoId.current = null;
               }
               if (event.data === 1) {
+                if (complete) setComplete(false);
                 lastPlayingIndex.current = current;
                 setPlaying(true);
                 samplePlaybackProgress(event.target);
@@ -331,7 +335,9 @@ export function Player({
                   pending?.position === current
                     ? pending.positionSeconds
                     : undefined;
-                if (
+                // 埋め込み内の前・次には位置補正を適用しない。アプリ操作・自然終了だけが要求を作る。
+                // 番号変化だけでの restoreCurrentVideoPosition 呼び出しは無効化。
+                if (pending?.position === current &&
                   restoreCurrentVideoPosition(
                     event.target,
                     current,
@@ -342,9 +348,19 @@ export function Player({
               }
               const actionIndex =
                 event.data === 0 ? lastPlayingIndex.current : current;
-              if (event.data === 0) clearCompletedPlayback(actionIndex);
+              if (event.data === 0) {
+                saveCompletedPlayback(actionIndex);
+                const next = actionIndex + 1;
+                if (next < videosRef.current.length) {
+                  pendingSeek.current = {
+                    position: next,
+                    positionSeconds: playbackPositionsRef.current[videosRef.current[next].id] ?? 0,
+                  };
+                }
+              }
               const action = tracker.current.observe(event.data, actionIndex);
               if (action === "playing") {
+                setComplete(false);
                 setIndex(current);
                 persistCurrentPlayback(event.target);
                 setError("");
@@ -460,7 +476,11 @@ export function Player({
   // 動画内の移動は公式APIだけを使い、現在のキュー位置は変更しない。
   function seekPlayerBy(seconds: number): boolean {
     const instance = player.current;
-    if (!instance || !ready || complete || error) return false;
+    if (!instance || !ready || error) return false;
+    if (complete) {
+      tracker.current = new PlaylistTracker(videosRef.current.length);
+      setComplete(false);
+    }
     const currentTime = instance.getCurrentTime();
     const duration = instance.getDuration();
     const upperLimit = duration > 0 ? duration : currentTime + seconds;
@@ -505,7 +525,7 @@ export function Player({
           className="icon-button player-control-button"
           aria-label="10秒戻る"
           title="10秒戻る"
-          disabled={!ready || complete || !!error}
+          disabled={!ready || !!error}
           onClick={() => seekPlayerBy(-10)}
         >
           <Icon name="back-10" />
@@ -514,7 +534,7 @@ export function Player({
           className="icon-button player-control-button"
           aria-label={playing ? "一時停止" : "再生"}
           title={playing ? "一時停止" : "再生"}
-          disabled={!ready || complete || !!error}
+          disabled={!ready || !!error}
           onClick={togglePlayerPlayback}
         >
           <Icon name={playing ? "pause" : "play"} />
@@ -523,7 +543,7 @@ export function Player({
           className="icon-button player-control-button"
           aria-label="10秒進む"
           title="10秒進む"
-          disabled={!ready || complete || !!error}
+          disabled={!ready || !!error}
           onClick={() => seekPlayerBy(10)}
         >
           <Icon name="forward-10" />

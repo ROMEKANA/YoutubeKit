@@ -7,12 +7,13 @@ export class PlaylistTracker {
   constructor(private readonly count: number) {}
 
   observe(state: number, index: number): "playing" | "complete" | null {
-    if (index < 0 || index >= this.count || this.completed) return null;
+    if (index < 0 || index >= this.count) return null;
     if (state === 1) {
+      this.completed = false;
       this.playedIndex = index;
       return "playing";
     }
-    if (state === 0 && index === this.count - 1 && this.playedIndex === index) {
+    if (!this.completed && state === 0 && index === this.count - 1 && this.playedIndex === index) {
       this.completed = true;
       return "complete";
     }
