@@ -478,8 +478,8 @@ export function Player({
       </button>
       <div className="section-heading">
         <div>
-          <p className="eyebrow">NOW WATCHING</p>
-          <h1>選んだ分だけ観れるサイト</h1>
+          <p className="eyebrow" hidden>NOW WATCHING</p>
+          <h1 hidden>選んだ分だけ観れるサイト</h1>
         </div>
         <span className="tag">
           {index + 1} / {videos.length} 本
@@ -533,7 +533,7 @@ export function Player({
           <Icon name="next" />
         </button>
       </div>
-      <div className="player-status" role="status">
+      <div className="player-status" role="status" hidden>
         {status}
       </div>
       {error && (
@@ -590,8 +590,8 @@ export function Player({
         )}
       </div>
       <div className="session-queue">
-        <h2>今回の再生キュー</h2>
-        <p className="muted">
+        <h2>再生キュー</h2>
+        <p className="muted" hidden>
           {complete
             ? resumePlaybackPosition
               ? "おつかれさまでした。動画を押すと、保存位置からもう一度再生できます。"

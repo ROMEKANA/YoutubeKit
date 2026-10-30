@@ -649,7 +649,7 @@ function CatalogApp({
                     >
                       保存したキューを選択
                     </button>
-                    <p className="eyebrow">VIDEO LIBRARY</p>
+                    <p className="eyebrow" hidden>VIDEO LIBRARY</p>
                     <h1>{currentChannel}</h1>
                   </div>
                 </div>
@@ -1336,7 +1336,7 @@ function CatalogApp({
                 ))}
               </select>
             </label>
-            <p className="panel-note">
+            <p className="panel-note" hidden>
               再生位置の記録と最後に再生した動画IDの保存は常に有効です。オフにすると保存位置を使わず最初から再生します。本家YouTubeの視聴位置とは同期しません。
             </p>
           </div>

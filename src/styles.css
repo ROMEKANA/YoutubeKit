@@ -1196,7 +1196,7 @@ small {
 }
 .player-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 12px;
   margin-top: 25px;
 }
@@ -1447,6 +1447,12 @@ small {
   }
   .player-actions {
     gap: 8px;
+  }
+  .player-actions :is(.primary, .secondary) {
+    padding-inline: 8px;
+    font-size: 11px;
+    white-space: nowrap;
+    min-height: 44px;
   }
   .toast {
     bottom: calc(90px + env(safe-area-inset-bottom));
