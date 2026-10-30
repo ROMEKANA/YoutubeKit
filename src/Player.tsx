@@ -15,6 +15,7 @@ interface Props {
   playbackPositions: Record<string, number>;
   saveIntervalSeconds: number;
   resumePlaybackPosition: boolean;
+  restartNearEndSeconds?: number;
   active: boolean;
   onClose: () => void;
   onPlaybackProgress?: (videoId: string, positionSeconds: number) => void;
@@ -36,6 +37,7 @@ export function Player({
   playbackPositions,
   saveIntervalSeconds,
   resumePlaybackPosition,
+  restartNearEndSeconds = 10,
   active,
   onClose,
   onPlaybackProgress,
@@ -74,11 +76,13 @@ export function Player({
   const playbackPositionsRef = useRef(playbackPositions);
   const saveIntervalSecondsRef = useRef(saveIntervalSeconds);
   const resumePlaybackPositionRef = useRef(resumePlaybackPosition);
+  const restartNearEndSecondsRef = useRef(restartNearEndSeconds);
   const onPlaybackProgressRef = useRef(onPlaybackProgress);
   videosRef.current = videos;
   playbackPositionsRef.current = playbackPositions;
   saveIntervalSecondsRef.current = saveIntervalSeconds;
   resumePlaybackPositionRef.current = resumePlaybackPosition;
+  restartNearEndSecondsRef.current = restartNearEndSeconds;
   onPlaybackProgressRef.current = onPlaybackProgress;
 
   function persistPlaybackSample(sample: {
@@ -121,11 +125,11 @@ export function Player({
     if (sample) persistPlaybackSample(sample);
   }
 
-  // 終了イベント時にプレーヤー番号が次へ変わっていても、実際に終了した動画だけを消去する。
+  // 終了した動画の位置を残し、次回の開始位置は終端設定で判断する。
   function clearCompletedPlayback(position: number) {
     const video = videosRef.current[position];
     if (!video) return;
-    const sample = { videoId: video.id, positionSeconds: 0 };
+    const sample = { videoId: video.id, positionSeconds: Math.floor(video.durationSeconds) };
     lastPlaybackSample.current = sample;
     persistPlaybackSample(sample);
   }
@@ -140,16 +144,17 @@ export function Player({
     if (!video || resumeCheckedVideoId.current === video.id) return false;
     resumeCheckedVideoId.current = video.id;
     if (!resumePlaybackPositionRef.current) return false;
-    const seconds =
+    const savedSeconds =
       requestedSeconds ?? playbackPositionsRef.current[video.id] ?? 0;
-    if (seconds <= 0) return false;
+    const duration = instance.getDuration() || video.durationSeconds;
+    const threshold = restartNearEndSecondsRef.current;
+    const seconds = threshold > 0 && duration > 0 && duration - savedSeconds <= threshold
+      ? 0
+      : savedSeconds;
+    if (savedSeconds <= 0) return false;
     tracker.current.observe(1, current);
     setIndex(current);
     setStatus(`${current + 1}本目の続きへ移動しています…`);
-    persistPlaybackSample({
-      videoId: video.id,
-      positionSeconds: Math.floor(seconds),
-    });
     instance.seekTo(seconds, true);
     return true;
   }

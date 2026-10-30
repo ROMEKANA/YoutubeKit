@@ -18,6 +18,7 @@ export interface Settings {
   theaterBrightness: number;
   playbackSaveIntervalSeconds: number;
   resumePlaybackPosition: boolean;
+  restartNearEndSeconds: number;
 }
 
 export interface SavedQueue {
@@ -48,6 +49,7 @@ export const defaultSettings: Settings = {
   theaterBrightness: 20,
   playbackSaveIntervalSeconds: 5,
   resumePlaybackPosition: true,
+  restartNearEndSeconds: 10,
 };
 
 // 保存データが旧形式や破損状態でも、利用できる項目だけを復元する。
@@ -183,6 +185,9 @@ export function restoreState(raw: string | null): SavedState {
           typeof settings.resumePlaybackPosition === "boolean"
             ? settings.resumePlaybackPosition
             : true,
+        restartNearEndSeconds: [0, 5, 10, 15, 30].includes(settings.restartNearEndSeconds)
+          ? settings.restartNearEndSeconds
+          : 10,
       },
     };
   } catch {
@@ -250,7 +255,6 @@ export function mergeSavedQueue(
   for (const id of savedQueue.videoIds) {
     const seconds = savedQueue.playbackPositions[id];
     if (seconds > 0) mergedPositions[id] = seconds;
-    else delete mergedPositions[id];
   }
   return {
     queue: appendQueue(queue, savedQueue.videoIds),

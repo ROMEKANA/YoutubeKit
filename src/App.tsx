@@ -320,8 +320,6 @@ function CatalogApp({
     setSaved((state) => ({
       ...state,
       queue: [],
-      resumeVideoId: null,
-      playbackPositions: {},
     }));
     setToast("再生キューをすべて削除しました");
   }
@@ -587,6 +585,7 @@ function CatalogApp({
             playbackPositions={saved.playbackPositions}
             saveIntervalSeconds={settings.playbackSaveIntervalSeconds}
             resumePlaybackPosition={settings.resumePlaybackPosition}
+            restartNearEndSeconds={settings.restartNearEndSeconds}
             onClose={endPlayback}
             onPlaybackProgress={(videoId, positionSeconds) =>
               setSaved((state) => {
@@ -599,7 +598,6 @@ function CatalogApp({
                 const playbackPositions = { ...state.playbackPositions };
                 if (positionSeconds > 0)
                   playbackPositions[videoId] = positionSeconds;
-                else delete playbackPositions[videoId];
                 return { ...state, resumeVideoId: videoId, playbackPositions };
               })
             }
@@ -765,6 +763,9 @@ function CatalogApp({
                           </span>
                           <span className="video-date">
                             {dateLabel(video.publishedAt)}
+                            {(saved.playbackPositions[video.id] ?? 0) > 0 && (
+                              <span> · 再生位置 {formatDuration(saved.playbackPositions[video.id])}</span>
+                            )}
                             {hidden && (
                               <span className="hidden-label">非表示</span>
                             )}
@@ -1333,6 +1334,14 @@ function CatalogApp({
                       ? "なし（切替・終了時のみ）"
                       : `${seconds}秒`}
                   </option>
+                ))}
+              </select>
+            </label>
+            <label className="setting-row">
+              <span>終端付近は最初から再生</span>
+              <select value={settings.restartNearEndSeconds} onChange={(event) => updateSettings({ restartNearEndSeconds: Number(event.target.value) })}>
+                {[0, 5, 10, 15, 30].map((seconds) => (
+                  <option key={seconds} value={seconds}>{seconds === 0 ? "なし" : `残り${seconds}秒以下`}</option>
                 ))}
               </select>
             </label>
