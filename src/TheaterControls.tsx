@@ -145,6 +145,7 @@ export function TheaterControls({
         }
       }}
       onPointerDown={(event) => {
+        event.preventDefault();
         if (event.pointerType === "mouse" && event.button !== 0) return;
         exitTap.current =
           event.isPrimary && hitsExit(event.clientX, event.clientY)
@@ -168,6 +169,8 @@ export function TheaterControls({
         gestures.move(event.pointerId, event.clientX, event.clientY);
       }}
       onPointerUp={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
         const tap = exitTap.current;
         exitTap.current = null;
         if (

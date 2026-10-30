@@ -216,6 +216,7 @@ function CatalogApp({
   const [theater, setTheater] = useState(false);
   const playerHandle = useRef<PlayerHandle>(null);
   const theaterButton = useRef<HTMLButtonElement>(null);
+  const suppressTheaterClick = useRef(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const [dragTargetIndex, setDragTargetIndex] = useState<number | null>(null);
   const dragOrigin = useRef<number | null>(null);
@@ -526,7 +527,15 @@ function CatalogApp({
               ref={theaterButton}
               title="シアターモード"
               aria-pressed={theater}
-              onClick={() => setTheater(true)}
+              onPointerDown={() => { suppressTheaterClick.current = false; }}
+              onClick={() => {
+                // 解除に使った指から届くクリックを消費し、新しい押下だけで再開する。
+                if (suppressTheaterClick.current) {
+                  suppressTheaterClick.current = false;
+                  return;
+                }
+                setTheater(true);
+              }}
             >
               <Icon name="theater" />
             </button>
@@ -1574,7 +1583,10 @@ function CatalogApp({
           }
           onSeek={(seconds) => playerHandle.current?.seekBy(seconds) ?? false}
           exitButton={theaterButton}
-          onExit={() => setTheater(false)}
+          onExit={() => {
+            suppressTheaterClick.current = true;
+            setTheater(false);
+          }}
         />
       )}
     </div>
