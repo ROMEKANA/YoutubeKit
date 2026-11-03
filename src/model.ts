@@ -19,6 +19,8 @@ export interface Settings {
   playbackSaveIntervalSeconds: number;
   resumePlaybackPosition: boolean;
   restartNearEndSeconds: number;
+  watchedMinPercent: number;
+  watchedMaxPercent: number;
 }
 
 export interface SavedQueue {
@@ -50,6 +52,8 @@ export const defaultSettings: Settings = {
   playbackSaveIntervalSeconds: 5,
   resumePlaybackPosition: true,
   restartNearEndSeconds: 10,
+  watchedMinPercent: 0,
+  watchedMaxPercent: 100,
 };
 
 // 保存データが旧形式や破損状態でも、利用できる項目だけを復元する。
@@ -100,6 +104,11 @@ export function restoreState(raw: string | null): SavedState {
         ? input
         : fallback;
     const settings = value.settings ?? {};
+    const percent = (input: unknown, fallback: number) =>
+      typeof input === "number" && Number.isInteger(input) && input >= 0 && input <= 100
+        ? input : fallback;
+    const watchedMinPercent = percent(settings.watchedMinPercent, 0);
+    const watchedMaxPercent = Math.max(watchedMinPercent, percent(settings.watchedMaxPercent, 100));
     const savedQueueIds = new Set<string>();
     const savedQueues: SavedQueue[] = Array.isArray(value.savedQueues)
       ? value.savedQueues.flatMap((item: unknown) => {
@@ -165,6 +174,8 @@ export function restoreState(raw: string | null): SavedState {
       savedQueues,
       hidden: ids(value.hidden),
       settings: {
+        watchedMinPercent,
+        watchedMaxPercent,
         densityPercent,
         initialCount: number(settings.initialCount, 30, 100),
         additionalCount: number(settings.additionalCount, 30, 100),
@@ -292,6 +303,16 @@ export function isExcludedByDuration(
   settings: Settings,
 ): boolean {
   return settings.excludeShort && durationSeconds <= settings.shortThreshold;
+}
+
+// 未視聴・長さ不明は0%とし、保存位置が動画時間を超えた場合も100%までに収める。
+export function isWithinWatchedRange(video: Video, positionSeconds = 0, minPercent = 0, maxPercent = 100): boolean {
+  if (video.durationSeconds <= 0) return minPercent === 0;
+  const position = Number.isFinite(positionSeconds)
+    ? Math.min(video.durationSeconds, Math.max(0, positionSeconds)) : 0;
+  // 割り算の丸めで境界の動画が範囲外にならないよう、秒と割合の積で比較する。
+  return position * 100 >= video.durationSeconds * minPercent &&
+    position * 100 <= video.durationSeconds * maxPercent;
 }
 
 export function moveItem(queue: string[], from: number, to: number): string[] {

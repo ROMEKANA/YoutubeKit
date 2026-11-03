@@ -13,6 +13,7 @@ import {
   getQueueStart,
   toggleQueueItem,
   isExcludedByDuration,
+  isWithinWatchedRange,
   formatDuration,
   formatPublishedAt,
   readWarningDismissal,
@@ -245,7 +246,8 @@ function CatalogApp({
     (video) =>
       (channelId === "all" || video.channelId === channelId) &&
       (showHidden || !saved.hidden.includes(video.id)) &&
-      !isExcludedByDuration(video.durationSeconds, settings),
+      !isExcludedByDuration(video.durationSeconds, settings) &&
+      isWithinWatchedRange(video, saved.playbackPositions[video.id], settings.watchedMinPercent, settings.watchedMaxPercent),
   );
   const currentChannel =
     channels.find((channel) => channel.id === channelId)?.title ??
@@ -272,12 +274,15 @@ function CatalogApp({
     setLimit(settings.initialCount);
   }, [channelId, showHidden, settings]);
   useEffect(() => {
-    if (catalog.sourceKey === "locked") return;
+    if (catalog.sourceKey === "locked" || session) return;
     catalog.selectView({
       channelId,
       count: limit,
       minDuration: settings.excludeShort ? settings.shortThreshold : -1,
       hidden: showHidden ? [] : saved.hidden,
+      playbackPositions: saved.playbackPositions,
+      watchedMinPercent: settings.watchedMinPercent,
+      watchedMaxPercent: settings.watchedMaxPercent,
     });
   }, [
     channelId,
@@ -286,6 +291,10 @@ function CatalogApp({
     settings.excludeShort,
     settings.shortThreshold,
     saved.hidden,
+    saved.playbackPositions,
+    settings.watchedMinPercent,
+    settings.watchedMaxPercent,
+    session,
     catalog.sourceKey,
   ]);
 
@@ -1315,6 +1324,25 @@ function CatalogApp({
           </div>
           <div className="settings-section">
             <h3>再生位置</h3>
+            <label className="theater-brightness">
+              表示する視聴割合の下限 <output>{settings.watchedMinPercent}%</output>
+              <input type="range" min="0" max="100" step="1"
+                value={settings.watchedMinPercent}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  updateSettings({ watchedMinPercent: value, watchedMaxPercent: Math.max(value, settings.watchedMaxPercent) });
+                }} />
+            </label>
+            <label className="theater-brightness">
+              表示する視聴割合の上限 <output>{settings.watchedMaxPercent}%</output>
+              <input type="range" min="0" max="100" step="1"
+                value={settings.watchedMaxPercent}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  updateSettings({ watchedMaxPercent: value, watchedMinPercent: Math.min(value, settings.watchedMinPercent) });
+                }} />
+            </label>
+            <p className="panel-note">未視聴は0%として扱います。手動の非表示設定とは独立しています。</p>
             <label className="setting-row">
               <span>途中から再生する</span>
               <input

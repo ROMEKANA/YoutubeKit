@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { parseVideos, restoreState, type Video } from "./model";
+import { isWithinWatchedRange, parseVideos, restoreState, type Video } from "./model";
 import { parseSyncIssues, type SyncIssue } from "../shared/sync";
 
 export interface Channel {
@@ -31,6 +31,9 @@ export interface CatalogView {
   count: number;
   minDuration: number;
   hidden: string[];
+  playbackPositions?: Record<string, number>;
+  watchedMinPercent?: number;
+  watchedMaxPercent?: number;
 }
 interface Progress {
   jobId: string;
@@ -238,7 +241,9 @@ export function useCatalog() {
         });
         next = parseCatalog(await request(`/api/catalog?${query}`, {}, signal));
         const visibleCount = next.videos.filter(
-          (video) => !selectedView.hidden.includes(video.id),
+          (video) => !selectedView.hidden.includes(video.id) &&
+            isWithinWatchedRange(video, selectedView.playbackPositions?.[video.id],
+              selectedView.watchedMinPercent, selectedView.watchedMaxPercent),
         ).length;
         if (visibleCount >= selectedView.count || view.current !== selectedView)
           break;
