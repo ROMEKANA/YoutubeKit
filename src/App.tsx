@@ -32,6 +32,8 @@ import { Player, type PlayerHandle } from "./Player";
 import { TheaterControls } from "./TheaterControls";
 import { useCatalog, type CatalogController } from "./useCatalog";
 import { usePwa, type PwaController } from "./usePwa";
+import { useCloud } from "./useCloud";
+import { cloudIntervals } from "../shared/cloud";
 
 type Panel =
   "channels" | "queue" | "savedQueues" | "saveQueue" | "settings" | null;
@@ -224,6 +226,7 @@ function CatalogApp({
   const dragOrigin = useRef<number | null>(null);
   const dragTarget = useRef<number | null>(null);
   const settings = saved.settings;
+  const cloud = useCloud(stateKey, saved, setSaved, catalog.auth?.authenticated ? catalog.auth.csrfToken : undefined, !!session);
   const knownVideos = useRef(new Map<string, Video>());
   for (const video of catalog.queueVideos)
     knownVideos.current.set(video.id, video);
@@ -1231,6 +1234,32 @@ function CatalogApp({
 
       {panel === "settings" && (
         <Modal title="設定" onClose={() => setPanel(null)}>
+          {catalog.auth?.authenticated && (
+            <div className="settings-section">
+              <h3>クラウド保存と同期</h3>
+              <p role="status">{cloud.status}</p>
+              <label className="setting-row"><span>自動同期</span><input type="checkbox" checked={cloud.options.enabled} onChange={(event) => cloud.updateOptions({ enabled: event.target.checked })} /></label>
+              <label className="setting-row"><span>再生位置の定期送信</span>
+                <select value={cloud.options.positionSeconds} onChange={(event) => cloud.updateOptions({ positionSeconds: Number(event.target.value) })}>
+                  {cloudIntervals.map((seconds) => <option key={seconds} value={seconds}>{seconds === 0 ? "オフ（手動同期で送信）" : `${seconds}秒`}</option>)}
+                </select>
+              </label>
+              <label className="setting-row"><span>他ブラウザの変更を定期確認</span>
+                <select value={cloud.options.pollSeconds} onChange={(event) => cloud.updateOptions({ pollSeconds: Number(event.target.value) })}>
+                  {cloudIntervals.map((seconds) => <option key={seconds} value={seconds}>{seconds === 0 ? "オフ" : `${seconds}秒`}</option>)}
+                </select>
+              </label>
+              <p className="panel-note">同期設定はこのブラウザ専用です。ローカルの再生位置保存間隔とは別です。定期確認がオフでも起動・復帰・変更の送信時に同期します。</p>
+              <button className="secondary" disabled={!cloud.ready || cloud.busy} onClick={() => void cloud.sync()}>今すぐ同期</button>
+              <button className="text-button" disabled={!!session || cloud.busy} onClick={cloud.inheritQueue}>別ブラウザのキューを引き継ぐ</button>
+              <details>
+                <summary onClick={() => void cloud.listBackups()}>バックアップから復元</summary>
+                <p className="panel-note">各ブラウザの同期前の状態と削除前の状態を直近30世代保持します。</p>
+                <button className="text-button" onClick={() => void cloud.listBackups()}>一覧を更新</button>
+                {cloud.backups.map((backup) => <div key={backup.id} className="setting-row"><span>{new Date(backup.createdAt).toLocaleString("ja-JP")}（{backup.device.slice(0, 8)}）</span><button className="text-button" disabled={!!session || cloud.busy} onClick={() => void cloud.restoreBackup(backup.id)}>復元</button></div>)}
+              </details>
+            </div>
+          )}
           <div className="settings-section settings-list">
             <h3>動画一覧</h3>
             <label className="setting-row">
@@ -1417,7 +1446,7 @@ function CatalogApp({
             <h3>{catalog.auth?.account?.email ?? "Googleアカウント未接続"}</h3>
             <p hidden={!!catalog.auth?.authenticated}>
               {catalog.auth?.authenticated
-                ? "登録チャンネルと動画情報はサーバーに保存されます。キュー・非表示・設定は、この段階ではブラウザごとの保存です。"
+                ? "保存キュー・非表示・共通設定・再生位置はクラウドへ同期できます。現在のキューはブラウザごとに保存します。"
                 : catalog.backendOffline
                   ? "バックエンドが起動していません。READMEの手順でバックエンドを起動してください。"
                   : catalog.auth?.configured

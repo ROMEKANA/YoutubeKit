@@ -12,6 +12,7 @@ import { AppError } from "./errors";
 import { getCatalog, getSavedVideos, startSync, stepSync } from "./sync";
 import { loadHistory } from "./history";
 import { cleanup } from "./cleanup";
+import { readCloud, writeCloud, saveBackup, readBackups } from "./cloud";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -25,14 +26,14 @@ app.use("*", async (c, next) => {
 });
 app.use(
   "/api/*",
-  bodyLimit({
-    maxSize: 1024,
+  async (c, next) => bodyLimit({
+    maxSize: c.req.path.startsWith("/api/cloud/") ? 1024 * 1024 : 1024,
     onError: (c) =>
       c.json(
         { error: "リクエストが大きすぎます。", code: "REQUEST_TOO_LARGE" },
         413,
       ),
-  }),
+  })(c, next),
 );
 app.get("/api/status", async (c) => {
   const missing = missingConfiguration(c.env);
@@ -61,6 +62,10 @@ app.get("/auth/callback", finishLogin);
 app.post("/api/logout", logout);
 app.post("/api/disconnect", disconnect);
 app.get("/api/catalog", getCatalog);
+app.get("/api/cloud/state", readCloud);
+app.post("/api/cloud/state", writeCloud);
+app.get("/api/cloud/backups", readBackups);
+app.post("/api/cloud/backups", saveBackup);
 app.get("/api/saved-videos", getSavedVideos);
 app.post("/api/channel/history", loadHistory);
 app.post("/api/sync/start", startSync);

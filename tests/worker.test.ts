@@ -14,6 +14,7 @@ import {
   YouTubeClient,
 } from "../worker/youtube";
 import type { SyncIssue } from "../shared/sync";
+import { restoreState } from "../src/model";
 
 const origin = "https://app.example.net";
 const sub = "123456789012345678901";
@@ -43,6 +44,48 @@ let uploadFailure: {
 let extraUploadPage = false;
 
 const seconds = () => Math.floor(Date.now() / 1000);
+
+describe("クラウド同期API", () => {
+  const queue = { id: "12345678-1234-4123-8123-123456789abc", name: "保存キュー", videoIds: ["aqz-KE-bpKQ"], resumeVideoId: null, playbackPositions: {} };
+  async function change(key: string, value: unknown, base: number) {
+    const response = await post("/api/cloud/state", { changes: [{ key, value: JSON.stringify(value), base }] });
+    expect(response.status, await response.clone().text()).toBe(200);
+    return (await response.json<{ entries: { value: string; revision: number }[] }>()).entries[0];
+  }
+  it("認証・CSRFを要求し、同じIDを重複保存せず削除済みIDを復活させない", async () => {
+    expect((await mf.dispatchFetch(`${origin}/api/cloud/state`)).status).toBe(401);
+    await authenticated();
+    expect((await post("/api/cloud/state", { changes: [] }, { "X-CSRF-Token": "invalid" })).status).toBe(403);
+    const key = `queue/${queue.id}`;
+    expect((await change(key, queue, 0)).revision).toBe(1);
+    expect((await change(key, queue, 0)).revision).toBe(1);
+    expect((await change(key, null, 1)).revision).toBe(2);
+    expect((await change(key, queue, 0)).value).toBe("null");
+    expect((await change(key, queue, 2)).value).toBe("null");
+  });
+  it("再生位置の巻き戻しを保存し、古い版からの上書きを拒否する", async () => {
+    await authenticated();
+    const key = "position/aqz-KE-bpKQ";
+    expect((await change(key, 120, 0)).revision).toBe(1);
+    expect((await change(key, 30, 1)).value).toBe("30");
+    expect((await change(key, 150, 1)).value).toBe("30");
+    expect((await change(key, 0, 2)).value).toBe("0");
+    const invalid = await post("/api/cloud/state", { changes: [{ key, value: "-1", base: 3 }] });
+    expect(invalid.status).toBe(400);
+  });
+  it("バックアップを再送しても増やさず、削除前の内容を復元用に返す", async () => {
+    await authenticated();
+    const snapshot = restoreState(JSON.stringify({ savedQueues: [queue] }));
+    const body = { device: queue.id, event: queue.id, state: snapshot };
+    expect((await post("/api/cloud/backups", body)).status).toBe(200);
+    expect((await post("/api/cloud/backups", body)).status).toBe(200);
+    const response = await mf.dispatchFetch(`${origin}/api/cloud/backups`, { headers: { Cookie: sessionCookie } });
+    const data = await response.json<{ backups: { id: string }[] }>();
+    expect(data.backups).toHaveLength(1);
+    const restored = await mf.dispatchFetch(`${origin}/api/cloud/backups?id=${data.backups[0].id}`, { headers: { Cookie: sessionCookie } });
+    expect((await restored.json<{ state: unknown }>()).state).toEqual(snapshot);
+  });
+});
 const published = (ago: number) =>
   new Date((seconds() - ago) * 1000).toISOString();
 const json = (value: unknown, status = 200) =>
@@ -337,7 +380,9 @@ beforeAll(async () => {
   const schema =
     (await readFile("migrations/0001_accounts_catalog.sql", "utf8")) +
     "\n" +
-    (await readFile("migrations/0002_channel_ranges.sql", "utf8"));
+    (await readFile("migrations/0002_channel_ranges.sql", "utf8")) +
+    "\n" +
+    (await readFile("migrations/0003_cloud_state.sql", "utf8"));
   // D1のexecは行単位で実行するため、CREATE文を一文ずつ渡す。
   for (const sql of schema
     .replace(/^--.*$/gm, "")
