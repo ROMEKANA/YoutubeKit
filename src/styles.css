@@ -1118,6 +1118,10 @@ small {
   padding-left: max(19px, env(safe-area-inset-left, 0px));
   padding-right: max(19px, env(safe-area-inset-right, 0px));
 }
+/* ノッチ側だけの余白で動画の中心がずれないよう、最大化時は左右を揃える。 */
+.app-shell.video-maximized .playing-main {
+  padding-inline: max(19px, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
+}
 @media (max-height: 500px) {
   .app-shell:has(.playing-main) .header { position: static; }
 }
