@@ -1,9 +1,11 @@
 import {
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type Ref,
+  type RefObject,
 } from "react";
 import { Icon } from "./Icon";
 import type { Video } from "./model";
@@ -20,6 +22,11 @@ interface Props {
   onClose: () => void;
   onPlaybackProgress?: (videoId: string, positionSeconds: number) => void;
   onSaveQueue?: () => void;
+  videoMaximized?: boolean;
+  onToggleVideoMaximized?: () => void;
+  onEnterTheater?: () => void;
+  theaterButton?: RefObject<HTMLButtonElement | null>;
+  onTheaterPointerDown?: () => void;
   testMode?: boolean;
   ref?: Ref<PlayerHandle>;
 }
@@ -42,10 +49,74 @@ export function Player({
   onClose,
   onPlaybackProgress,
   onSaveQueue,
+  videoMaximized = false,
+  onToggleVideoMaximized,
+  onEnterTheater,
+  theaterButton,
+  onTheaterPointerDown,
   testMode = false,
   ref,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
+  const view = useRef<HTMLElement>(null);
+  const toolbar = useRef<HTMLDivElement>(null);
+  const transport = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+
+  // 表示領域と操作列の実寸から動画枠だけを変更し、同じiframeで再生を続ける。
+  useLayoutEffect(() => {
+    if (!active) return;
+    const section = view.current;
+    const shell = host.current;
+    const top = toolbar.current;
+    const bottom = transport.current;
+    const probe = viewport.current;
+    if (!section || !shell || !top || !bottom || !probe) return;
+    const header = document.querySelector<HTMLElement>(".header");
+    let frame = 0;
+    let align = true;
+    let viewportWidth = window.innerWidth;
+    const measure = () => {
+      const headerHeight = header && getComputedStyle(header).position === "sticky" ? header.getBoundingClientRect().height : 0;
+      const safeTop = headerHeight > 0 ? 0 : parseFloat(getComputedStyle(probe).paddingTop) || 0;
+      const safeBottom = parseFloat(getComputedStyle(probe).paddingBottom) || 0;
+      const visibleHeight = Math.min(probe.clientHeight, window.visualViewport?.height ?? window.innerHeight);
+      const controlsHeight = videoMaximized ? 0 : top.offsetHeight + bottom.offsetHeight + 24;
+      const availableHeight = Math.max(200, visibleHeight - headerHeight - safeTop - safeBottom - 12 - controlsHeight);
+      const width = Math.max(200, Math.min(section.clientWidth, availableHeight * 16 / 9));
+      const height = Math.max(200, width * 9 / 16);
+      shell.style.width = `${width}px`;
+      shell.style.height = `${height}px`;
+      if (align) {
+        align = false;
+        const target = videoMaximized ? shell : top;
+        window.scrollTo({ top: Math.max(0, target.getBoundingClientRect().top + window.scrollY - headerHeight - safeTop - 6), behavior: "instant" });
+      }
+    };
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(measure);
+    };
+    const resize = () => {
+      // 操作バーの開閉でサイズだけを変え、上へ戻るスクロールを妨げない。
+      align ||= viewportWidth !== window.innerWidth;
+      viewportWidth = window.innerWidth;
+      schedule();
+    };
+    const observer = new ResizeObserver(schedule);
+    for (const element of [section, top, bottom, probe, header]) {
+      if (element) observer.observe(element);
+    }
+    window.addEventListener("resize", resize);
+    window.visualViewport?.addEventListener("resize", resize);
+    measure();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener("resize", resize);
+      window.visualViewport?.removeEventListener("resize", resize);
+    };
+  }, [active, videoMaximized]);
   const player = useRef<YT.Player | null>(null);
   const [index, setIndex] = useState(0);
   const [status, setStatus] = useState("YouTubeプレーヤーを読み込んでいます…");
@@ -494,24 +565,43 @@ export function Player({
   const current = videos[index];
   return (
     <section
+      ref={view}
       className={`playback-view ${active ? "" : "player-preparing"}`.trim()}
       aria-hidden={!active}
       inert={!active}
     >
-      <button className="text-button back" onClick={onClose}>
-        ← 動画一覧に戻る
-      </button>
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow" hidden>NOW WATCHING</p>
-          <h1 hidden>選んだ分だけ観れるサイト</h1>
-        </div>
+      <div className="player-viewport" ref={viewport} aria-hidden="true" />
+      <div hidden>
+        <p className="eyebrow">NOW WATCHING</p>
+        <h1>選んだ分だけ観れるサイト</h1>
+      </div>
+      <div className="player-toolbar" ref={toolbar}>
+        <button className="text-button" onClick={onClose}>
+          ← 動画一覧に戻る
+        </button>
         <span className="tag">
           {index + 1} / {videos.length} 本
         </span>
+        <div className="player-view-actions">
+          {onToggleVideoMaximized && (
+            <button className={`icon-button ${videoMaximized ? "active" : ""}`}
+              aria-label={videoMaximized ? "操作ボタンを含めて画面に収める" : "動画を画面内で最大化する"}
+              title={videoMaximized ? "操作ボタンを含めて画面に収める" : "動画を画面内で最大化する"}
+              aria-pressed={videoMaximized} onClick={onToggleVideoMaximized}>
+              <Icon name={videoMaximized ? "shrink" : "expand"} />
+            </button>
+          )}
+          {onEnterTheater && (
+            <button className="icon-button" ref={theaterButton}
+              aria-label="シアターモード" title="シアターモード"
+              onPointerDown={onTheaterPointerDown} onClick={onEnterTheater}>
+              <Icon name="theater" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="player-shell" ref={host} />
-      <div className="player-transport" aria-label="動画の再生操作">
+      <div className="player-transport" ref={transport} aria-label="動画の再生操作">
         <button
           className="icon-button player-control-button"
           aria-label="前の動画"

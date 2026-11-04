@@ -469,7 +469,7 @@ function CatalogApp({
 
   return (
     <div
-      className={`app-shell ${theater ? "theater-mode" : ""}`}
+      className={`app-shell ${theater ? "theater-mode" : ""} ${session && settings.playerVideoMaximized ? "video-maximized" : ""}`}
       style={
         {
           "--theater-brightness": `${settings.theaterBrightness}%`,
@@ -531,24 +531,6 @@ function CatalogApp({
               <Icon name="refresh" />
             </button>
             <button
-              className={`icon-button ${theater ? "active" : ""}`}
-              aria-label="シアターモード"
-              ref={theaterButton}
-              title="シアターモード"
-              aria-pressed={theater}
-              onPointerDown={() => { suppressTheaterClick.current = false; }}
-              onClick={() => {
-                // 解除に使った指から届くクリックを消費し、新しい押下だけで再開する。
-                if (suppressTheaterClick.current) {
-                  suppressTheaterClick.current = false;
-                  return;
-                }
-                setTheater(true);
-              }}
-            >
-              <Icon name="theater" />
-            </button>
-            <button
               className={`icon-button ${showHidden ? "active" : ""}`}
               aria-label="非表示動画も表示"
               aria-pressed={showHidden}
@@ -604,6 +586,18 @@ function CatalogApp({
             saveIntervalSeconds={settings.playbackSaveIntervalSeconds}
             resumePlaybackPosition={settings.resumePlaybackPosition}
             restartNearEndSeconds={settings.restartNearEndSeconds}
+            videoMaximized={settings.playerVideoMaximized}
+            onToggleVideoMaximized={() => updateSettings({ playerVideoMaximized: !settings.playerVideoMaximized })}
+            theaterButton={theaterButton}
+            onTheaterPointerDown={() => { suppressTheaterClick.current = false; }}
+            onEnterTheater={() => {
+              // 解除直後のクリックでは再開せず、新しく押した時だけ有効にする。
+              if (suppressTheaterClick.current) {
+                suppressTheaterClick.current = false;
+                return;
+              }
+              setTheater(true);
+            }}
             onClose={endPlayback}
             onPlaybackProgress={(videoId, positionSeconds) =>
               setSaved((state) => {
@@ -1404,7 +1398,7 @@ function CatalogApp({
               />
             </label>
             <p className="panel-note theater-instructions" hidden>
-              更新と目の間のアイコンを押すと、確認なしでページ全体をこの明るさにします。プレーヤーを含む画面全体のタップをガードし、トリプルタップで再生・一時停止を切り替えます。シアターボタンの位置をタップ、または3秒長押しで解除します。
+              再生中の動画上部にあるシアターアイコンを押すと、確認なしでページ全体をこの明るさにします。プレーヤーを含む画面全体のタップをガードし、トリプルタップで再生・一時停止を切り替えます。シアターボタンの位置をタップ、または3秒長押しで解除します。
             </p>
             <p className="panel-note" hidden>
               本体の輝度やSafariのアドレスバーは変更できません。省電力にはコントロールセンターで本体の明るさも下げてください。自動ロック防止は端末が許可する場合だけ有効です。画面ロック中やバックグラウンドでの再生には対応しません。

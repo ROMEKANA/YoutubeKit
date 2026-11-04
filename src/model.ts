@@ -16,6 +16,7 @@ export interface Settings {
   excludeShort: boolean;
   shortThreshold: number;
   theaterBrightness: number;
+  playerVideoMaximized: boolean;
   playbackSaveIntervalSeconds: number;
   resumePlaybackPosition: boolean;
   restartNearEndSeconds: number;
@@ -49,6 +50,7 @@ export const defaultSettings: Settings = {
   excludeShort: true,
   shortThreshold: 180,
   theaterBrightness: 20,
+  playerVideoMaximized: false,
   playbackSaveIntervalSeconds: 5,
   resumePlaybackPosition: true,
   restartNearEndSeconds: 10,
@@ -185,6 +187,7 @@ export function restoreState(raw: string | null): SavedState {
             : true,
         shortThreshold: number(settings.shortThreshold, 180, 3600),
         theaterBrightness: number(settings.theaterBrightness, 20, 100),
+        playerVideoMaximized: settings.playerVideoMaximized === true,
         playbackSaveIntervalSeconds:
           typeof settings.playbackSaveIntervalSeconds === "number" &&
           playbackSaveIntervals.includes(

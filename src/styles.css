@@ -1089,9 +1089,37 @@ small {
   background: #eef2e6;
 }
 .playing-main {
-  max-width: 900px;
+  max-width: none;
   padding-top: 25px;
   padding-bottom: 60px;
+}
+.video-maximized .header { position: static; }
+.player-viewport {
+  position: fixed;
+  width: 0;
+  height: 100dvh;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  visibility: hidden;
+  pointer-events: none;
+}
+.player-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.player-toolbar > .text-button { margin-right: auto; }
+.player-toolbar > .tag { white-space: nowrap; }
+.player-view-actions { display: flex; gap: 4px; }
+.player-toolbar > .text-button { min-width: 0; }
+.app-shell .playing-main {
+  padding-left: max(19px, env(safe-area-inset-left, 0px));
+  padding-right: max(19px, env(safe-area-inset-right, 0px));
+}
+@media (max-height: 500px) {
+  .app-shell:has(.playing-main) .header { position: static; }
 }
 .theater-brightness {
   display: block;
@@ -1162,6 +1190,7 @@ small {
   background: #17221c;
   border-radius: 12px;
   overflow: hidden;
+  margin-inline: auto;
 }
 .player-shell iframe {
   border: 0;
@@ -1173,7 +1202,7 @@ small {
 .player-transport {
   display: flex;
   justify-content: center;
-  gap: 12px;
+  gap: clamp(4px, 2vw, 12px);
   margin-top: 14px;
 }
 .player-control-button {
