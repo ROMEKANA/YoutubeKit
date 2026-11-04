@@ -64,8 +64,19 @@ export function Player({
   const toolbar = useRef<HTMLDivElement>(null);
   const transport = useRef<HTMLDivElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
+  const player = useRef<YT.Player | null>(null);
+  const playerSizeReady = useRef(false);
+  const playerSize = useRef<{ instance: YT.Player; width: number; height: number } | null>(null);
 
-  // 表示領域と操作列の実寸から動画枠だけを変更し、同じiframeで再生を続ける。
+  // 外枠と埋め込みの寸法を揃え、サイズ変更後に古い表示寸法が残らないようにする。
+  function syncPlayerSize(instance: YT.Player, width: number, height: number) {
+    const previous = playerSize.current;
+    if (previous?.instance === instance && previous.width === width && previous.height === height) return;
+    instance.setSize(width, height);
+    playerSize.current = { instance, width, height };
+  }
+
+  // 表示領域と操作列の実寸から枠とプレーヤーを変更し、同じiframeで再生を続ける。
   useLayoutEffect(() => {
     if (!active) return;
     const section = view.current;
@@ -85,10 +96,11 @@ export function Player({
       const visibleHeight = Math.min(probe.clientHeight, window.visualViewport?.height ?? window.innerHeight);
       const controlsHeight = videoMaximized ? 0 : top.offsetHeight + bottom.offsetHeight + 24;
       const availableHeight = Math.max(200, visibleHeight - headerHeight - safeTop - safeBottom - 12 - controlsHeight);
-      const width = Math.max(200, Math.min(section.clientWidth, availableHeight * 16 / 9));
-      const height = Math.max(200, width * 9 / 16);
+      const width = Math.max(200, Math.floor(Math.min(section.clientWidth, availableHeight * 16 / 9)));
+      const height = Math.max(200, Math.floor(width * 9 / 16));
       shell.style.width = `${width}px`;
       shell.style.height = `${height}px`;
+      if (playerSizeReady.current && player.current) syncPlayerSize(player.current, width, height);
       if (align) {
         align = false;
         const target = videoMaximized ? shell : top;
@@ -119,7 +131,6 @@ export function Player({
       window.visualViewport?.removeEventListener("resize", resize);
     };
   }, [active, videoMaximized]);
-  const player = useRef<YT.Player | null>(null);
   const [index, setIndex] = useState(0);
   const [status, setStatus] = useState("YouTubeプレーヤーを読み込んでいます…");
   const [error, setError] = useState("");
@@ -316,6 +327,9 @@ export function Player({
     let instance: YT.Player | undefined;
     let readyTimer: number | undefined;
     let playerReady = false;
+    // 再接続中は準備前のインスタンスへサイズ変更を送らない。
+    playerSizeReady.current = false;
+    playerSize.current = null;
     queueReady.current = false;
     startRequested.current = null;
     pendingSeek.current = null;
@@ -363,8 +377,8 @@ export function Player({
             );
         }, 20000);
         instance = new api.Player(target, {
-          width: "100%",
-          height: "100%",
+          width: Math.max(200, host.current.clientWidth),
+          height: Math.max(200, host.current.clientHeight),
           playerVars: {
             playsinline: 1,
             controls: 1,
@@ -374,6 +388,8 @@ export function Player({
             onReady: (event) => {
               if (disposed) return;
               playerReady = true;
+              playerSizeReady.current = true;
+              if (host.current) syncPlayerSize(event.target, Math.max(200, host.current.clientWidth), Math.max(200, host.current.clientHeight));
               window.clearTimeout(readyTimer);
               readyTimer = undefined;
               setError("");
@@ -498,6 +514,8 @@ export function Player({
       disposed = true;
       window.clearTimeout(readyTimer);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      playerSizeReady.current = false;
+      playerSize.current = null;
       instance?.destroy();
       player.current = null;
     };
