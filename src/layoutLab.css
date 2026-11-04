@@ -1,0 +1,55 @@
+.layout-lab .player-shell {
+  outline: 2px solid #087ac0;
+}
+.layout-case-D .player-shell iframe {
+  width: 0 !important;
+  min-width: 100%;
+  max-width: 100%;
+}
+.layout-case-E .player-shell iframe {
+  width: inherit !important;
+}
+.layout-case-G .player-shell {
+  border-radius: 0;
+  overflow: visible;
+}
+.layout-lab-controls {
+  max-width: 720px;
+  margin: 28px auto 0;
+}
+.layout-lab-controls h1 {
+  font-size: 21px;
+}
+.layout-lab-controls p {
+  font-size: 14px;
+  line-height: 1.8;
+}
+.layout-lab-controls label {
+  display: block;
+  margin: 18px 0;
+}
+.layout-lab-controls :is(input, select, textarea) {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  font: inherit;
+  min-height: 44px;
+}
+.layout-lab-controls button {
+  margin: 5px;
+}
+.layout-lab-controls textarea {
+  min-height: 80px;
+}
+.layout-lab-controls .layout-lab-report {
+  min-height: 240px;
+}
+.layout-lab-controls pre {
+  overflow: auto;
+  font-size: 12px;
+}
+.layout-lab-actions {
+  display: flex;
+  flex-wrap: wrap;
+}

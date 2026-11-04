@@ -29,7 +29,17 @@ interface Props {
   theaterButton?: RefObject<HTMLButtonElement | null>;
   onTheaterPointerDown?: () => void;
   testMode?: boolean;
+  diagnosticSizing?: "auto" | "freeze" | "width";
+  onLayoutDiagnostic?: (event: PlayerLayoutDiagnostic) => void;
   ref?: Ref<PlayerHandle>;
+}
+
+export interface PlayerLayoutDiagnostic {
+  event: "measure" | "setSize";
+  width: number;
+  height: number;
+  availableHeight?: number;
+  limitedBy?: "width" | "height";
 }
 
 export interface PlayerHandle {
@@ -57,6 +67,8 @@ export function Player({
   theaterButton,
   onTheaterPointerDown,
   testMode = false,
+  diagnosticSizing = "auto",
+  onLayoutDiagnostic,
   ref,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
@@ -74,6 +86,7 @@ export function Player({
     if (previous?.instance === instance && previous.width === width && previous.height === height) return;
     instance.setSize(width, height);
     playerSize.current = { instance, width, height };
+    onLayoutDiagnostic?.({ event: "setSize", width, height });
   }
 
   // 表示領域と操作列の実寸から枠とプレーヤーを変更し、同じiframeで再生を続ける。
@@ -96,11 +109,12 @@ export function Player({
       const visibleHeight = Math.min(probe.clientHeight, window.visualViewport?.height ?? window.innerHeight);
       const controlsHeight = videoMaximized ? 0 : top.offsetHeight + bottom.offsetHeight + 24;
       const availableHeight = Math.max(200, visibleHeight - headerHeight - safeTop - safeBottom - 12 - controlsHeight);
-      const width = Math.max(200, Math.floor(Math.min(section.clientWidth, availableHeight * 16 / 9)));
+      const width = Math.max(200, Math.floor(diagnosticSizing === "width" ? section.clientWidth : Math.min(section.clientWidth, availableHeight * 16 / 9)));
       const height = Math.max(200, Math.floor(width * 9 / 16));
       shell.style.width = `${width}px`;
       shell.style.height = `${height}px`;
       if (playerSizeReady.current && player.current) syncPlayerSize(player.current, width, height);
+      onLayoutDiagnostic?.({ event: "measure", width, height, availableHeight, limitedBy: diagnosticSizing === "width" || section.clientWidth <= availableHeight * 16 / 9 ? "width" : "height" });
       if (align) {
         align = false;
         const target = videoMaximized ? shell : top;
@@ -118,11 +132,14 @@ export function Player({
       schedule();
     };
     const observer = new ResizeObserver(schedule);
-    for (const element of [section, top, bottom, probe, header]) {
-      if (element) observer.observe(element);
+    // 固定条件では開始時だけ計算し、回転・操作バー変化への追従を外して比較する。
+    if (diagnosticSizing !== "freeze") {
+      for (const element of [section, top, bottom, probe, header]) {
+        if (element) observer.observe(element);
+      }
+      window.addEventListener("resize", resize);
+      window.visualViewport?.addEventListener("resize", resize);
     }
-    window.addEventListener("resize", resize);
-    window.visualViewport?.addEventListener("resize", resize);
     measure();
     return () => {
       cancelAnimationFrame(frame);
@@ -130,7 +147,7 @@ export function Player({
       window.removeEventListener("resize", resize);
       window.visualViewport?.removeEventListener("resize", resize);
     };
-  }, [active, videoMaximized]);
+  }, [active, videoMaximized, diagnosticSizing]);
   const [index, setIndex] = useState(0);
   const [status, setStatus] = useState("YouTubeプレーヤーを読み込んでいます…");
   const [error, setError] = useState("");

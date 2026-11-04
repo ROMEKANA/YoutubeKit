@@ -1528,6 +1528,7 @@ function CatalogApp({
           </div>
           <div className="settings-section settings-app">
             <h3>アプリとホーム画面</h3>
+            <p><a className="text-button" href="/?lab=layout">表示ずれの比較画面</a></p>
             <p className="panel-note">
               iPhoneはSafariの共有から「ホーム画面に追加」を選びます。
               <span hidden>
