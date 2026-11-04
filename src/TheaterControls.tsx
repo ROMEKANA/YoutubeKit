@@ -3,11 +3,13 @@ import { createTheaterGestures } from "./theaterGestures";
 
 // 映像を隠さない透明な操作面で、利用者が解除するまで誤タップを防ぐ。
 export function TheaterControls({
+  playbackComplete,
   onTogglePlayback,
   onSeek,
   onExit,
   exitButton,
 }: {
+  playbackComplete: boolean;
   onTogglePlayback: () => "playing" | "paused" | null;
   onSeek: (seconds: number) => boolean;
   onExit: () => void;
@@ -97,6 +99,19 @@ export function TheaterControls({
     pad.current?.focus();
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    return () => {
+      gestures.dispose();
+      document.body.style.overflow = overflow;
+    };
+  }, [gestures]);
+
+  // 完了時だけ解放し、再開時は操作面を作り直さず再取得する。
+  useEffect(() => {
+    if (playbackComplete) {
+      setWakeMessage("再生が終了したため、自動ロック防止を解除しました。");
+      return;
+    }
+    setWakeMessage("画面の自動ロック防止を確認しています…");
     let disposed = false;
     let lock: WakeLockSentinel | undefined;
     // 正規のWake Lockが使えない場合は、ロック防止を保証せず状態を表示する。
@@ -124,11 +139,9 @@ export function TheaterControls({
     })();
     return () => {
       disposed = true;
-      gestures.dispose();
-      document.body.style.overflow = overflow;
       void lock?.release().catch(() => {});
     };
-  }, [gestures]);
+  }, [playbackComplete]);
   return (
     <div
       ref={pad}

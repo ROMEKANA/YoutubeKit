@@ -215,6 +215,7 @@ function CatalogApp({
   const [toast, setToast] = useState("");
   const [session, setSession] = useState<Video[] | null>(null);
   const [theater, setTheater] = useState(false);
+  const [playbackComplete, setPlaybackComplete] = useState(false);
   const playerHandle = useRef<PlayerHandle>(null);
   const theaterButton = useRef<HTMLButtonElement>(null);
   const suppressTheaterClick = useRef(false);
@@ -599,6 +600,7 @@ function CatalogApp({
               setTheater(true);
             }}
             onClose={endPlayback}
+            onCompleteChange={setPlaybackComplete}
             onPlaybackProgress={(videoId, positionSeconds) =>
               setSaved((state) => {
                 const previousPosition = state.playbackPositions[videoId] ?? 0;
@@ -1600,6 +1602,7 @@ function CatalogApp({
       )}
       {theater && (
         <TheaterControls
+          playbackComplete={playbackComplete}
           onTogglePlayback={() =>
             playerHandle.current?.togglePlayback() ?? null
           }

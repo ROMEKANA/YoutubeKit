@@ -21,6 +21,7 @@ interface Props {
   active: boolean;
   onClose: () => void;
   onPlaybackProgress?: (videoId: string, positionSeconds: number) => void;
+  onCompleteChange?: (complete: boolean) => void;
   onSaveQueue?: () => void;
   videoMaximized?: boolean;
   onToggleVideoMaximized?: () => void;
@@ -48,6 +49,7 @@ export function Player({
   active,
   onClose,
   onPlaybackProgress,
+  onCompleteChange,
   onSaveQueue,
   videoMaximized = false,
   onToggleVideoMaximized,
@@ -124,6 +126,10 @@ export function Player({
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [complete, setComplete] = useState(false);
+  // キュー完了と再開をシアターの自動ロック防止へ伝える。
+  useEffect(() => {
+    onCompleteChange?.(complete);
+  }, [complete, onCompleteChange]);
   const [attempt, setAttempt] = useState(0);
   const tracker = useRef(new PlaylistTracker(videos.length));
   const queueReady = useRef(false);
