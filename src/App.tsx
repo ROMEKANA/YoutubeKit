@@ -346,6 +346,27 @@ function CatalogApp({
     );
   }
 
+  function removeQueueVideo(id: string) {
+    setSaved((state) => ({
+      ...state,
+      queue: state.queue.filter((item) => item !== id),
+    }));
+    setMenuVideo(null);
+    setToast("キューから削除しました");
+  }
+
+  // 視聴済みの目印を付けても、キューを再開する動画は変えない。
+  function markVideoWatched(video: Video) {
+    if (video.durationSeconds <= 0) return;
+    const position = Math.max(0, Math.floor(video.durationSeconds) - 1);
+    setSaved((state) => ({
+      ...state,
+      playbackPositions: { ...state.playbackPositions, [video.id]: position },
+    }));
+    setMenuVideo(null);
+    setToast("視聴済みとしてマークしました");
+  }
+
   function clearQueue() {
     if (!saved.queue.length) return;
     if (!window.confirm("再生キューをすべて削除しますか？")) return;
@@ -457,16 +478,19 @@ function CatalogApp({
     setToast(`「${selected.name}」を削除しました`);
   }
 
-  function startPlayback() {
+  function startPlayback(from: "resume" | "beginning" | { videoId: string } = "resume") {
     if (!canPlay) return;
-    const start = getQueueStart(
-      saved.queue,
-      saved.resumeVideoId,
-      saved.playbackPositions,
-    );
+    const start = from === "beginning"
+      ? { index: 0, positionSeconds: 0 }
+      : getQueueStart(
+          saved.queue,
+          from === "resume" ? saved.resumeVideoId : from.videoId,
+          saved.playbackPositions,
+        );
     // 準備済みプレーヤーを同じタップ処理内で表示し、iPhoneの再生許可を維持する。
     flushSync(() => {
       setPanel(null);
+      setMenuVideo(null);
       setSession(playableQueue);
     });
     playerHandle.current?.startAt(start.index, start.positionSeconds);
@@ -983,7 +1007,7 @@ function CatalogApp({
             <button
               className="primary play-button"
               disabled={!canPlay}
-              onClick={startPlayback}
+              onClick={() => startPlayback()}
             >
               <Icon name="play" size={17} /> 再生開始
             </button>
@@ -1073,9 +1097,6 @@ function CatalogApp({
               </button>
             </div>
           </div>
-          <p className="panel-note">
-            左のハンドルをドラッグ、または上下ボタンで並べ替え。
-          </p>
           {!saved.queue.length && (
             <div className="empty-state">
               <Icon name="list" size={32} />
@@ -1092,6 +1113,19 @@ function CatalogApp({
                     ? "drop-before"
                     : "drop-after"
                   : "";
+              const rowDetails = (
+                <>
+                  <img className="queue-thumb" src={video?.thumbnailUrl || thumbnail(id)} alt="" />
+                  <span className="queue-item-info">
+                    <strong>{index + 1}. {video?.title ?? `取得できない動画 (${id})`}</strong>
+                    <small>
+                      {video
+                        ? `${video.channel} · ${formatDuration(video.durationSeconds)}`
+                        : "保存状態を残しています。必要に応じて削除してください。"}
+                    </small>
+                  </span>
+                </>
+              );
               return (
                 <li
                   key={id}
@@ -1141,21 +1175,17 @@ function CatalogApp({
                   >
                     <Icon name="grip" size={18} />
                   </button>
-                  <img
-                    className="queue-thumb"
-                    src={video?.thumbnailUrl || thumbnail(id)}
-                    alt=""
-                  />
-                  <div className="queue-item-info">
-                    <strong>
-                      {index + 1}. {video?.title ?? `取得できない動画 (${id})`}
-                    </strong>
-                    <small>
-                      {video
-                        ? `${video.channel} · ${formatDuration(video.durationSeconds)}`
-                        : "保存状態を残しています。必要に応じて削除してください。"}
-                    </small>
-                  </div>
+                  {video ? (
+                    <button
+                      className="queue-item-details"
+                      aria-label={`${video.title}の操作`}
+                      onClick={() => setMenuVideo(video)}
+                    >
+                      {rowDetails}
+                    </button>
+                  ) : (
+                    <div className="queue-item-details">{rowDetails}</div>
+                  )}
                   <div className="reorder-buttons">
                     <button
                       aria-label={`${video?.title ?? id}を上へ`}
@@ -1172,28 +1202,27 @@ function CatalogApp({
                       ↓
                     </button>
                   </div>
-                  <button
-                    className="icon-button remove-button"
-                    aria-label={`${video?.title ?? id}をキューから削除`}
-                    onClick={() =>
-                      setSaved((state) => ({
-                        ...state,
-                        queue: state.queue.filter((item) => item !== id),
-                      }))
-                    }
-                  >
-                    <Icon name="close" size={17} />
-                  </button>
+                  {!video && (
+                    <button
+                      className="icon-button remove-button"
+                      aria-label={`${id}をキューから削除`}
+                      onClick={() => removeQueueVideo(id)}
+                    >
+                      <Icon name="close" size={17} />
+                    </button>
+                  )}
                 </li>
               );
             })}
           </ol>
-          <div className="modal-footer">
-            <p className="panel-note">このブラウザに自動保存されます。</p>
+          <div className="modal-footer queue-play-actions">
+            <button className="secondary" disabled={!canPlay} onClick={() => startPlayback("beginning")}>
+              最初から再生
+            </button>
             <button
-              className="primary full-width"
+              className="primary"
               disabled={!canPlay}
-              onClick={startPlayback}
+              onClick={() => startPlayback()}
             >
               <Icon name="play" size={16} />
               このキューを再生
@@ -1666,19 +1695,31 @@ function CatalogApp({
         <Modal title="動画の操作" onClose={() => setMenuVideo(null)}>
           <p className="menu-video-title">{menuVideo.title}</p>
           <div className="action-menu">
-            <button
-              onClick={() => {
-                toggleQueue(menuVideo);
-                setMenuVideo(null);
-              }}
-            >
-              <Icon
-                name={saved.queue.includes(menuVideo.id) ? "close" : "plus"}
-              />
-              {saved.queue.includes(menuVideo.id)
-                ? "キューから削除"
-                : "キューに追加"}
-            </button>
+            {panel === "queue" ? (
+              <>
+                <button onClick={() => removeQueueVideo(menuVideo.id)}>
+                  <Icon name="close" />
+                  キューから削除
+                </button>
+                <button disabled={!canPlay} onClick={() => startPlayback({ videoId: menuVideo.id })}>
+                  <Icon name="play" />
+                  この動画から再生
+                </button>
+                <button disabled={menuVideo.durationSeconds <= 0} onClick={() => markVideoWatched(menuVideo)}>
+                  視聴済みとしてマーク
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => {
+                  toggleQueue(menuVideo);
+                  setMenuVideo(null);
+                }}
+              >
+                <Icon name={saved.queue.includes(menuVideo.id) ? "close" : "plus"} />
+                {saved.queue.includes(menuVideo.id) ? "キューから削除" : "キューに追加"}
+              </button>
+            )}
             <button onClick={() => toggleHidden(menuVideo)}>
               <Icon name="eye" />
               {saved.hidden.includes(menuVideo.id)
