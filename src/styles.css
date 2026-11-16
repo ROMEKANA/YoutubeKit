@@ -331,6 +331,17 @@ small {
   object-fit: contain;
   display: block;
 }
+.duration {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #17201fd9;
+  color: white;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
 .added-mark {
   position: absolute;
   inset: 0;
@@ -434,16 +445,6 @@ small {
   background: #d9e1d3;
   color: #526b50;
 }
-.video-times {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 8px;
-  margin-top: 4px;
-  color: #626e5f;
-  font-size: clamp(10px, calc(10px * var(--list-scale)), 20px);
-  font-variant-numeric: tabular-nums;
-}
-.video-times span { white-space: nowrap; }
 .video-date {
   display: block;
   font-size: clamp(9px, calc(9px * var(--list-scale)), 18px);
@@ -1087,7 +1088,15 @@ small {
   gap: 10px;
   text-align: left;
 }
-.queue-item-details .queue-thumb { flex-shrink: 0; }
+.queue-thumb-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.queue-thumb-wrap img { display: block; }
+.queue-thumb-wrap .duration {
+  bottom: 2px;
+  right: 2px;
+}
 .queue-play-actions {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

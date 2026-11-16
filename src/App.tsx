@@ -118,6 +118,7 @@ function Thumbnail({
       {queuePosition > 0 && (
         <span className="added-mark">{queuePosition}番目</span>
       )}
+      <span className="duration">{formatDuration(video.durationSeconds)}</span>
     </button>
   );
 }
@@ -1017,9 +1018,7 @@ function CatalogApp({
                     const queuePosition = saved.queue.indexOf(video.id) + 1;
                     const added = queuePosition > 0;
                     const hidden = saved.hidden.includes(video.id);
-                    const duration = Math.floor(video.durationSeconds);
                     const position = saved.playbackPositions[video.id] ?? 0;
-                    const watched = duration > 0 ? Math.min(position, duration) : position;
                     return (
                       <article
                         className={`video-row ${hidden ? "is-hidden" : ""}`}
@@ -1033,7 +1032,6 @@ function CatalogApp({
                         <button
                           className="video-details"
                           aria-label={`${video.title}の操作メニュー`}
-                          aria-describedby={`video-times-${video.id}`}
                           onClick={() => setMenuVideo(video)}
                         >
                           <h3>{video.title}</h3>
@@ -1054,12 +1052,11 @@ function CatalogApp({
                             </span>
                             {video.channel}
                           </span>
-                          <span className="video-times" id={`video-times-${video.id}`}>
-                            <span>動画時間 {duration > 0 ? formatDuration(duration) : "不明"}</span>
-                            <span>視聴時間 {formatDuration(watched)}</span>
-                          </span>
                           <span className="video-date">
                             {dateLabel(video.publishedAt)}
+                            {position > 0 && (
+                              <span> · 再生位置 {formatDuration(position)}</span>
+                            )}
                             {hidden && (
                               <span className="hidden-label">非表示</span>
                             )}
@@ -1342,12 +1339,15 @@ function CatalogApp({
                   : "";
               const rowDetails = (
                 <>
-                  <img className="queue-thumb" src={video?.thumbnailUrl || thumbnail(id)} alt="" />
+                  <span className="queue-thumb-wrap">
+                    <img className="queue-thumb" src={video?.thumbnailUrl || thumbnail(id)} alt="" />
+                    {video && <span className="duration">{formatDuration(video.durationSeconds)}</span>}
+                  </span>
                   <span className="queue-item-info">
                     <strong>{index + 1}. {video?.title ?? `取得できない動画 (${id})`}</strong>
                     <small>
                       {video
-                        ? `${video.channel} · ${formatDuration(video.durationSeconds)}`
+                        ? `${video.channel} · 再生位置 ${formatDuration(saved.playbackPositions[id] ?? 0)}`
                         : "保存状態を残しています。必要に応じて削除してください。"}
                     </small>
                   </span>
