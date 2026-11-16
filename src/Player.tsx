@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Icon } from "./Icon";
 import { formatDuration, type Video } from "./model";
-import { PlaylistTracker } from "./playback";
+import { getQueueEditStart, PlaylistTracker, type QueueEditStart } from "./playback";
 import { loadYouTubeApi } from "./youtube";
 
 interface Props {
@@ -23,6 +23,8 @@ interface Props {
   onCompleteChange?: (complete: boolean) => void;
   onVideoPlaying?: (video: Video) => void;
   onSaveQueue?: () => void;
+  onQueueEdit?: (videos: Video[], start: QueueEditStart) => void;
+  queueEditStart?: QueueEditStart;
   videoMaximized?: boolean;
   onToggleVideoMaximized?: () => void;
   testMode?: boolean;
@@ -46,7 +48,7 @@ export interface PlayerHandle {
   seekBy: (seconds: number) => boolean;
 }
 
-// 再生開始時のキューを固定し、一覧や保存キューの編集で再生順序を変えない。
+// 再生順はセッションで管理し、再生画面の編集操作でだけ更新する。
 export function Player({
   videos,
   playbackPositions,
@@ -59,6 +61,8 @@ export function Player({
   onCompleteChange,
   onVideoPlaying,
   onSaveQueue,
+  onQueueEdit,
+  queueEditStart,
   videoMaximized = false,
   onToggleVideoMaximized,
   testMode = false,
@@ -149,6 +153,10 @@ export function Player({
     positions: Record<string, number>;
   } | null>(null);
   const displayedVideoId = useRef<string | null>(null);
+  const queueDrag = useRef<{ from: number; to: number } | null>(null);
+  const [draggedRow, setDraggedRow] = useState<{ from: number; to: number } | null>(null);
+  const lastQueueEditStart = useRef<QueueEditStart | undefined>(undefined);
+  const restoreAfterEdit = useRef<QueueEditStart | null>(null);
   const recordedQueuePositions = useRef<Record<string, number>>({});
   const [status, setStatus] = useState("YouTubeプレーヤーを読み込んでいます…");
   const [error, setError] = useState("");
@@ -186,7 +194,6 @@ export function Player({
   const onPlaybackProgressRef = useRef(onPlaybackProgress);
   const onVideoPlayingRef = useRef(onVideoPlaying);
   onVideoPlayingRef.current = onVideoPlaying;
-  videosRef.current = videos;
   playbackPositionsRef.current = playbackPositions;
   saveIntervalSecondsRef.current = saveIntervalSeconds;
   resumePlaybackPositionRef.current = resumePlaybackPosition;
@@ -375,6 +382,14 @@ export function Player({
     startRequested.current = null;
     pendingSeek.current = null;
     resumeCheckedVideoId.current = null;
+    videosRef.current = videos;
+    // 再接続でも、まだ再開できていない編集直後の位置は維持する。
+    const edit = queueEditStart === lastQueueEditStart.current
+      ? restoreAfterEdit.current
+      : queueEditStart ?? null;
+    lastQueueEditStart.current = queueEditStart;
+    restoreAfterEdit.current = edit;
+    const editedIndex = edit ? videos.findIndex((video) => video.id === edit.videoId) : -1;
     lastPlaylistIndex.current = -1;
     lastPlayingIndex.current = -1;
     lastPlaybackSample.current = null;
@@ -384,7 +399,7 @@ export function Player({
     setPlaying(false);
     setComplete(false);
     setError("");
-    setIndex(0);
+    setIndex(Math.max(0, editedIndex));
     setStatus("YouTubeプレーヤーを読み込んでいます…");
     const handleVisibilityChange = () => {
       if (document.hidden && playerReady) {
@@ -437,11 +452,16 @@ export function Player({
               setReady(true);
               setStatus("再生キューを準備しています…");
               event.target.setLoop(false);
-              event.target.cuePlaylist(
-                videos.map((video) => video.id),
-                0,
-                0,
-              );
+              const ids = videos.map((video) => video.id);
+              if (edit && editedIndex >= 0) {
+                // 編集直前の位置は「途中から再生」設定や終端付近の補正を通さない。
+                if (edit.autoplay && !document.hidden)
+                  event.target.loadPlaylist(ids, editedIndex, edit.seconds);
+                else
+                  event.target.cuePlaylist(ids, editedIndex, edit.seconds);
+              } else {
+                event.target.cuePlaylist(ids, 0, 0);
+              }
             },
             onStateChange: (event) => {
               if (disposed) return;
@@ -458,13 +478,25 @@ export function Player({
                 lastPlaylistIndex.current = current;
                 resumeCheckedVideoId.current = null;
               }
+              let restoredSeconds: number | undefined;
               if (event.data === 1) {
+                queueReady.current = true;
                 const video = videosRef.current[current];
+                const restore = restoreAfterEdit.current;
+                if (video && restore) {
+                  restoreAfterEdit.current = null;
+                  const actualSeconds = event.target.getCurrentTime();
+                  if (video.id === restore.videoId &&
+                      (!Number.isFinite(actualSeconds) || Math.abs(actualSeconds - restore.seconds) > 1)) {
+                    event.target.seekTo(restore.seconds, true);
+                    restoredSeconds = restore.seconds;
+                  }
+                }
                 if (video) onVideoPlayingRef.current?.(video);
                 if (complete) setComplete(false);
                 lastPlayingIndex.current = current;
                 setPlaying(true);
-                samplePlaybackProgress(event.target);
+                samplePlaybackProgress(event.target, restoredSeconds);
                 if (video) updateQueueDisplay(video.id);
                 const pending = pendingSeek.current;
                 pendingSeek.current = null;
@@ -499,7 +531,7 @@ export function Player({
               if (action === "playing") {
                 setComplete(false);
                 setIndex(current);
-                persistCurrentPlayback(event.target);
+                persistCurrentPlayback(event.target, restoredSeconds);
                 setError("");
                 setStatus("再生中");
                 if (document.hidden) event.target.pauseVideo();
@@ -516,8 +548,11 @@ export function Player({
                 setStatus("一時停止中");
               } else if (event.data === 3) setStatus("動画を読み込んでいます…");
             },
-            onAutoplayBlocked: () => {
+            onAutoplayBlocked: (event) => {
               if (!disposed) {
+                const restore = restoreAfterEdit.current;
+                if (restore && editedIndex >= 0)
+                  event.target.cuePlaylist(videos.map((video) => video.id), editedIndex, restore.seconds);
                 setPlaying(false);
                 setStatus(
                   "自動再生が制限されました。「再開」を押してください。",
@@ -563,7 +598,7 @@ export function Player({
       instance?.destroy();
       player.current = null;
     };
-  }, [videos, attempt]);
+  }, [videos, attempt, queueEditStart]);
 
   // 1秒ごとにメモリ上だけ更新し、設定間隔に達した時だけブラウザ保存へ通知する。
   useEffect(() => {
@@ -596,6 +631,7 @@ export function Player({
       return;
     persistCurrentPlayback(instance);
     startRequested.current = null;
+    restoreAfterEdit.current = null;
     pendingSeek.current = {
       position,
       positionSeconds:
@@ -630,7 +666,50 @@ export function Player({
     return true;
   }
 
-  const current = videos[index];
+  // 指を離して確定した時点のIDと秒数を読み取り、編集中の自然な動画切替にも追従する。
+  function editQueue(next: Video[]) {
+    const instance = player.current;
+    if (!instance || !onQueueEdit || !queueReady.current || error) return;
+    const playlistIndex = instance.getPlaylistIndex();
+    const videoId = instance.getPlaylist()?.[playlistIndex] ?? videos[playlistIndex]?.id ?? videos[index]?.id;
+    if (!videoId) return;
+    const state = instance.getPlayerState();
+    const restore = restoreAfterEdit.current;
+    const measured = restore?.videoId === videoId ? restore.seconds : instance.getCurrentTime();
+    const seconds = Number.isFinite(measured) && measured >= 0
+      ? measured
+      : recordedQueuePositions.current[videoId] ?? playbackPositionsRef.current[videoId] ?? 0;
+    const saved = getQueueEditStart(
+      videos.map((video) => video.id),
+      next.map((video) => video.id),
+      { videoId, seconds, autoplay: state === 1 || state === 3 },
+    );
+    if (!saved) {
+      onClose();
+      return;
+    }
+    if (state === 1 || state === 2 || state === 3)
+      persistPlaybackSample({ videoId, positionSeconds: Math.floor(seconds) });
+    queueReady.current = false;
+    setReady(false);
+    setIndex(next.findIndex((video) => video.id === saved.videoId));
+    onQueueEdit(next, saved);
+  }
+
+  function moveQueueRow(from: number, to: number) {
+    if (from === to || from < 0 || from >= videos.length || to < 0 || to >= videos.length) return;
+    const next = [...videos];
+    const [video] = next.splice(from, 1);
+    next.splice(to, 0, video);
+    editQueue(next);
+  }
+
+  function clearQueueDrag() {
+    queueDrag.current = null;
+    setDraggedRow(null);
+  }
+
+  const current = videos[index] ?? videos[0];
   return (
     <section
       ref={view}
@@ -744,7 +823,7 @@ export function Player({
             className="primary"
             onClick={() => setAttempt((value) => value + 1)}
           >
-            先頭から再接続
+            {queueEditStart ? "再接続" : "先頭から再接続"}
           </button>
         )}
         <button className="secondary" onClick={onClose}>
@@ -774,8 +853,54 @@ export function Player({
           {videos.map((video, position) => {
             const isCurrent = queueDisplay?.videoId === video.id;
             const savedPosition = queueDisplay?.positions[video.id] ?? playbackPositions[video.id] ?? 0;
+            const dropMarker = draggedRow && draggedRow.from !== position && draggedRow.to === position
+              ? draggedRow.from > position ? "drop-before" : "drop-after"
+              : "";
             return (
-              <li key={video.id} className={isCurrent ? "current" : ""}>
+              <li
+                key={video.id}
+                data-session-queue-index={position}
+                className={`${isCurrent ? "current" : ""} ${dropMarker}`.trim()}
+              >
+                {onQueueEdit && (
+                  <button
+                    className="icon-button drag-handle session-queue-edit"
+                    aria-label={`${video.title}を並べ替える。ドラッグまたは上下キー`}
+                    disabled={!ready || !!error || videos.length < 2}
+                    onPointerDown={(event) => {
+                      if (event.button !== 0 || !event.isPrimary) return;
+                      queueDrag.current = { from: position, to: position };
+                      setDraggedRow(queueDrag.current);
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    }}
+                    onPointerMove={(event) => {
+                      if (!queueDrag.current || !event.isPrimary) return;
+                      const row = document.elementFromPoint(event.clientX, event.clientY)
+                        ?.closest<HTMLElement>("[data-session-queue-index]");
+                      if (!row) return;
+                      const to = Number(row.dataset.sessionQueueIndex);
+                      if (to !== queueDrag.current.to) {
+                        queueDrag.current = { ...queueDrag.current, to };
+                        setDraggedRow(queueDrag.current);
+                      }
+                    }}
+                    onPointerUp={(event) => {
+                      if (!event.isPrimary) return;
+                      const drag = queueDrag.current;
+                      clearQueueDrag();
+                      if (drag) moveQueueRow(drag.from, drag.to);
+                    }}
+                    onPointerCancel={clearQueueDrag}
+                    onLostPointerCapture={clearQueueDrag}
+                    onKeyDown={(event) => {
+                      if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                      event.preventDefault();
+                      moveQueueRow(position, position + (event.key === "ArrowUp" ? -1 : 1));
+                    }}
+                  >
+                    <Icon name="grip" size={18} />
+                  </button>
+                )}
                 <button
                   className="session-queue-item"
                   disabled={!ready || !!error}
@@ -796,6 +921,19 @@ export function Player({
                     </small>
                   </span>
                 </button>
+                {onQueueEdit && (
+                  <button
+                    className="icon-button session-queue-edit"
+                    aria-label={`${video.title}を再生中のキューから削除`}
+                    disabled={!ready || !!error}
+                    onClick={() => {
+                      if (window.confirm(`「${video.title}」を再生中のキューから削除しますか？`))
+                        editQueue(videos.filter((item) => item.id !== video.id));
+                    }}
+                  >
+                    <Icon name="close" size={17} />
+                  </button>
+                )}
               </li>
             );
           })}

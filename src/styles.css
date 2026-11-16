@@ -1326,10 +1326,33 @@ small {
   margin-top: 20px;
 }
 .session-queue li {
+  position: relative;
+  display: flex;
+  align-items: center;
   border-bottom: 1px solid var(--line);
 }
+.session-queue li.current {
+  border-radius: 10px;
+  background: #e7eddf;
+}
+.session-queue li.drop-before::before,
+.session-queue li.drop-after::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--green);
+  pointer-events: none;
+}
+.session-queue li.drop-before::before { top: 0; }
+.session-queue li.drop-after::after { bottom: 0; }
+.session-queue-edit { width: 34px; }
 .session-queue-item {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   display: flex;
   gap: 10px;
   align-items: center;
@@ -1356,9 +1379,6 @@ small {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
-}
-.session-queue li.current .session-queue-item {
-  background: #e7eddf;
 }
 .session-queue-item small {
   display: block;

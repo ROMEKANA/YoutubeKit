@@ -33,6 +33,7 @@ import {
 } from "./model";
 import { Icon } from "./Icon";
 import { Player, type PlayerHandle } from "./Player";
+import type { QueueEditStart } from "./playback";
 import { TheaterControls } from "./TheaterControls";
 import { addLatestChannelTimes, readLatestChannelTimes, readSavedVideos, useCatalog, type CatalogController } from "./useCatalog";
 import { usePwa, type PwaController } from "./usePwa";
@@ -236,7 +237,11 @@ function CatalogApp({
   const [hiddenVideoToRestore, setHiddenVideoToRestore] = useState<string | null>(null);
   const [limit, setLimit] = useState(saved.settings.initialCount);
   const [toast, setToast] = useState("");
-  const [session, setSession] = useState<{ videos: Video[]; single: boolean } | null>(null);
+  const [session, setSession] = useState<{
+    videos: Video[];
+    single: boolean;
+    editStart?: QueueEditStart;
+  } | null>(null);
   // 一覧の操作メニューを開いた時点で、単独再生用の1本を準備する。
   const singleQueue = useMemo(() => menuVideo && panel === null ? [menuVideo] : null, [menuVideo, panel]);
   const [theater, setTheater] = useState(false);
@@ -874,6 +879,10 @@ function CatalogApp({
             ref={playerHandle}
             active={!!session}
             videos={session?.videos ?? singleQueue ?? playableQueue}
+            queueEditStart={session?.editStart}
+            onQueueEdit={session && !session.single ? (videos, editStart) => {
+              setSession({ videos, editStart, single: false });
+            } : undefined}
             playbackPositions={saved.playbackPositions}
             saveIntervalSeconds={settings.playbackSaveIntervalSeconds}
             resumePlaybackPosition={settings.resumePlaybackPosition}

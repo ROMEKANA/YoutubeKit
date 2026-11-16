@@ -1,3 +1,27 @@
+export interface QueueEditStart {
+  videoId: string;
+  seconds: number;
+  autoplay: boolean;
+}
+
+// 編集前後の番号が変わっても、再生を戻す動画はIDで決める。
+export function getQueueEditStart(
+  before: string[],
+  after: string[],
+  current: QueueEditStart,
+): QueueEditStart | null {
+  if (!after.length) return null;
+  if (after.includes(current.videoId)) return current;
+
+  // 現在の動画を削除したら次へ進み、後続がなければ最後の動画を一時停止状態で選ぶ。
+  const previousIndex = Math.max(0, before.indexOf(current.videoId));
+  return {
+    videoId: after[Math.min(previousIndex, after.length - 1)],
+    seconds: 0,
+    autoplay: current.autoplay && previousIndex < after.length,
+  };
+}
+
 // 進行は公式プレーヤーに任せ、最終動画の終了だけをアプリ側で判定する。
 // ENDEDごとにnextVideoを呼ぶ方式は、公式の自動遷移と二重になるため使わない。
 export class PlaylistTracker {
