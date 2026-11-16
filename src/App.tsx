@@ -1919,6 +1919,7 @@ function CatalogApp({
               </select>
             </label>
             <p><a className="text-button" href="/?lab=layout">表示ずれの比較画面</a></p>
+            <p><a className="text-button" href="/?lab=volume">音量の比較画面</a></p>
             <p className="panel-note">
               iPhoneはSafariの共有から「ホーム画面に追加」を選びます。
               <span hidden>
