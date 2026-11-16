@@ -30,13 +30,13 @@ import {
 import { Icon } from "./Icon";
 import { Player, type PlayerHandle } from "./Player";
 import { TheaterControls } from "./TheaterControls";
-import { useCatalog, type CatalogController } from "./useCatalog";
+import { readSavedVideos, useCatalog, type CatalogController } from "./useCatalog";
 import { usePwa, type PwaController } from "./usePwa";
 import { useCloud } from "./useCloud";
 import { cloudIntervals } from "../shared/cloud";
 
 type Panel =
-  "channels" | "queue" | "savedQueues" | "saveQueue" | "settings" | null;
+  "channels" | "queue" | "savedQueues" | "savedQueuePreview" | "saveQueue" | "settings" | null;
 const thumbnail = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 const dateLabel = formatPublishedAt;
 
@@ -207,6 +207,9 @@ function CatalogApp({
   const [saveQueueReturnPanel, setSaveQueueReturnPanel] = useState<
     "queue" | null
   >(null);
+  const [previewQueueId, setPreviewQueueId] = useState<string | null>(null);
+  const [previewVideos, setPreviewVideos] = useState<Video[]>([]);
+  const previewQueue = saved.savedQueues.find((item) => item.id === previewQueueId);
   const [saveQueueVideoIds, setSaveQueueVideoIds] = useState<string[]>([]);
   const [saveQueueName, setSaveQueueName] = useState("");
   const [saveQueueDefaultName, setSaveQueueDefaultName] = useState("");
@@ -230,10 +233,11 @@ function CatalogApp({
   const knownVideos = useRef(new Map<string, Video>());
   for (const video of catalog.queueVideos)
     knownVideos.current.set(video.id, video);
+  for (const video of previewVideos) knownVideos.current.set(video.id, video);
   for (const video of videos) knownVideos.current.set(video.id, video);
   const queueVideos = useMemo(
     () => saved.queue.map((id) => knownVideos.current.get(id)),
-    [saved.queue, catalog.queueVideos, videos],
+    [saved.queue, catalog.queueVideos, previewVideos, videos],
   );
   const playableQueue = useMemo(
     () => queueVideos.filter((video): video is Video => !!video),
@@ -256,6 +260,20 @@ function CatalogApp({
   const currentChannel =
     channels.find((channel) => channel.id === channelId)?.title ??
     "すべてのチャンネル";
+
+  // 別ブラウザで保存されたキューは、プレビュー時にも不足する動画情報を補う。
+  useEffect(() => {
+    if (!previewQueue || !catalog.auth?.authenticated) return;
+    const missingIds = previewQueue.videoIds.filter((id) => !knownVideos.current.has(id));
+    if (!missingIds.length) return;
+    const controller = new AbortController();
+    void readSavedVideos(missingIds, controller.signal).then((details) => {
+      if (!controller.signal.aborted) setPreviewVideos(details);
+    }).catch(() => {
+      // 取得できない場合も、IDを表示して保存時の並びを確認できる。
+    });
+    return () => controller.abort();
+  }, [previewQueue, catalog.auth?.authenticated]);
 
   const refresh = () => catalog.refresh();
   useEffect(() => {
@@ -398,31 +416,33 @@ function CatalogApp({
     setPanel(saveQueueReturnPanel);
   }
 
-  function appendSavedQueue(id: string) {
-    const selected = saved.savedQueues.find((item) => item.id === id);
-    if (!selected) return;
-    const next = mergeSavedQueue(
-      saved.queue,
-      saved.resumeVideoId,
-      saved.playbackPositions,
-      selected,
-    );
-    const addedCount = next.queue.length - saved.queue.length;
+  function applySavedQueue(replace: boolean) {
+    const selected = previewQueue;
+    if (!selected) {
+      setPanel("savedQueues");
+      return;
+    }
+    const addedCount = selected.videoIds.filter((id) => !saved.queue.includes(id)).length;
     setSaved((state) => {
+      const current = state.savedQueues.find((item) => item.id === selected.id);
+      if (!current) return state;
       const merged = mergeSavedQueue(
-        state.queue,
-        state.resumeVideoId,
+        replace ? [] : state.queue,
+        replace ? null : state.resumeVideoId,
         state.playbackPositions,
-        selected,
+        current,
       );
+      // 旧形式などで対象外の再開IDが残っている場合は、置き換え後の先頭へ戻す。
+      if (replace && !merged.queue.some((id) => id === merged.resumeVideoId))
+        merged.resumeVideoId = null;
       return { ...state, ...merged };
     });
     setPanel(null);
-    setToast(
-      addedCount
+    setToast(replace
+      ? `「${selected.name}」に置き換えました`
+      : addedCount
         ? `「${selected.name}」から${addedCount}本追加しました`
-        : "保存キューの動画はすべて追加済みです",
-    );
+        : "保存キューの動画はすべて追加済みです");
   }
 
   function deleteSavedQueue(id: string) {
@@ -1196,7 +1216,10 @@ function CatalogApp({
               <li key={item.id}>
                 <button
                   className="saved-queue-select"
-                  onClick={() => appendSavedQueue(item.id)}
+                  onClick={() => {
+                    setPreviewQueueId(item.id);
+                    setPanel("savedQueuePreview");
+                  }}
                 >
                   <span>{item.name}</span>
                 </button>
@@ -1210,6 +1233,36 @@ function CatalogApp({
               </li>
             ))}
           </ul>
+        </Modal>
+      )}
+
+      {panel === "savedQueuePreview" && (
+        <Modal title={previewQueue?.name ?? "保存したキュー"} onClose={() => setPanel("savedQueues")}>
+          {previewQueue ? (
+            <>
+              <ol className="saved-queue-preview saved-queue-list" tabIndex={0} aria-label="保存した動画">
+                {previewQueue.videoIds.map((id, index) => {
+                  const video = knownVideos.current.get(id);
+                  return (
+                    <li key={id}>
+                      <img className="queue-thumb" src={video?.thumbnailUrl || thumbnail(id)} alt="" loading="lazy" />
+                      <div className="queue-item-info">
+                        <strong>{index + 1}. {video?.title ?? id}</strong>
+                        {video && <small>{video.channel}</small>}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+              <div className="modal-footer saved-queue-preview-actions">
+                <button className="primary" onClick={() => applySavedQueue(false)}>キューに追加</button>
+                <button className="secondary" onClick={() => applySavedQueue(true)}>今のキューを置き換え</button>
+                <button className="text-button" onClick={() => setPanel("savedQueues")}>キャンセル</button>
+              </div>
+            </>
+          ) : (
+            <p className="panel-note">この保存キューは利用できません。保存一覧へ戻ってください。</p>
+          )}
         </Modal>
       )}
 

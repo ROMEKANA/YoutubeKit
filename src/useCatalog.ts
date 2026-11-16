@@ -164,6 +164,16 @@ function parseCatalog(value: unknown): Catalog {
   };
 }
 
+// 保存キューの動画情報を、APIが受け付ける100件ごとに取得する。
+export async function readSavedVideos(ids: string[], signal: AbortSignal): Promise<Video[]> {
+  const videos: Video[] = [];
+  for (let index = 0; index < ids.length; index += 100) {
+    const chunk = ids.slice(index, index + 100).join(",");
+    videos.push(...parseVideos(await request(`/api/saved-videos?ids=${chunk}`, {}, signal)));
+  }
+  return videos;
+}
+
 function parseProgress(value: unknown): Progress {
   if (!value || typeof value !== "object")
     throw new Error("更新の応答が正しくありません。");
@@ -426,18 +436,7 @@ export function useCatalog() {
         } catch {
           /* 保存不可のブラウザでも一覧は使用できる。 */
         }
-        const restored: Video[] = [];
-        for (let index = 0; index < ids.length; index += 100)
-          restored.push(
-            ...parseVideos(
-              await request(
-                `/api/saved-videos?ids=${ids.slice(index, index + 100).join(",")}`,
-                {},
-                nextController.signal,
-              ),
-            ),
-          );
-        setQueueVideos(restored);
+        setQueueVideos(await readSavedVideos(ids, nextController.signal));
       }
       await readCatalog(status, nextController.signal);
       if (

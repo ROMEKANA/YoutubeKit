@@ -952,6 +952,19 @@ small {
   align-items: center;
   border-bottom: 1px solid var(--line);
 }
+.saved-queue-preview {
+  max-height: max(52px, min(50dvh, calc(100dvh - 210px), 460px));
+  overscroll-behavior: contain;
+}
+.saved-queue-preview li {
+  gap: 10px;
+  padding-block: 7px;
+}
+.saved-queue-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .saved-queue-select {
   display: flex;
   flex: 1;
