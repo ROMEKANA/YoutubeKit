@@ -104,6 +104,14 @@ small {
   background: #e2ece3;
   color: var(--green);
 }
+.icon-button.filter-toggle {
+  background: #fff;
+  border: 1px solid transparent;
+}
+.icon-button.filter-toggle.active {
+  background: #e2ece3;
+  border-color: var(--green);
+}
 .primary,
 .secondary {
   min-height: 46px;

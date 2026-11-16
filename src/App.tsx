@@ -751,7 +751,7 @@ function CatalogApp({
             {!session && (
               <>
                 <button
-                  className={`icon-button ${settings.excludeShort ? "active" : ""}`}
+                  className={`icon-button filter-toggle ${settings.excludeShort ? "active" : ""}`}
                   aria-label="動画時間で絞り込む"
                   title="動画時間で絞り込む"
                   aria-pressed={settings.excludeShort}
@@ -760,7 +760,7 @@ function CatalogApp({
                   <Icon name="clock" />
                 </button>
                 <button
-                  className={`icon-button ${settings.excludeByWatchedRange ? "active" : ""}`}
+                  className={`icon-button filter-toggle ${settings.excludeByWatchedRange ? "active" : ""}`}
                   aria-label="再生位置で絞り込む"
                   title="再生位置で絞り込む"
                   aria-pressed={settings.excludeByWatchedRange}
@@ -769,10 +769,10 @@ function CatalogApp({
                   <Icon name="percent" />
                 </button>
                 <button
-                  className={`icon-button ${!settings.excludeHiddenVideos ? "active" : ""}`}
-                  aria-label="非表示動画も表示"
-                  title="非表示動画も表示"
-                  aria-pressed={!settings.excludeHiddenVideos}
+                  className={`icon-button filter-toggle ${settings.excludeHiddenVideos ? "active" : ""}`}
+                  aria-label="非表示動画を除外する"
+                  title="非表示動画を除外する"
+                  aria-pressed={settings.excludeHiddenVideos}
                   onClick={() => updateSettings({ excludeHiddenVideos: !settings.excludeHiddenVideos })}
                 >
                   <Icon name={settings.excludeHiddenVideos ? "eye-off" : "eye"} />
