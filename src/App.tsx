@@ -664,13 +664,13 @@ function CatalogApp({
   }
 
   // 準備済みプレーヤーを同じタップ処理内で表示し、iPhoneの再生許可を維持する。
-  function beginPlayback(videos: Video[], start: { index: number; positionSeconds?: number }, single: boolean) {
+  function beginPlayback(videos: Video[], start: ReturnType<typeof getQueueStart>, single: boolean) {
     flushSync(() => {
       setPanel(null);
       setMenuVideo(null);
       setSession({ videos, single });
     });
-    playerHandle.current?.startAt(start.index, start.positionSeconds);
+    playerHandle.current?.startAt(start.index, start.positionSeconds, start.restartQueue);
     window.scrollTo({ top: 0 });
   }
 
@@ -884,14 +884,16 @@ function CatalogApp({
             onClose={endPlayback}
             onCompleteChange={setPlaybackComplete}
             onVideoPlaying={recordChannelWatch}
-            onPlaybackProgress={(videoId, positionSeconds, recordedAt) => {
-              if (!session || positionSeconds <= 0) return;
+            onPlaybackProgress={(videoId, positionSeconds, recordedAt, restart) => {
+              if (!session || (positionSeconds === 0 && !restart)) return;
               setSaved((state) => {
-                if (recordedAt <= (state.playbackPositionRecordedAt[videoId] ?? 0)) return state;
+                const previousTime = state.playbackPositionRecordedAt[videoId] ?? 0;
+                if (!restart && recordedAt <= previousTime) return state;
+                const time = restart ? Math.max(recordedAt, previousTime + 1) : recordedAt;
                 return {
                   ...state,
                   playbackPositions: { ...state.playbackPositions, [videoId]: positionSeconds },
-                  playbackPositionRecordedAt: { ...state.playbackPositionRecordedAt, [videoId]: recordedAt },
+                  playbackPositionRecordedAt: { ...state.playbackPositionRecordedAt, [videoId]: time },
                 };
               });
             }}

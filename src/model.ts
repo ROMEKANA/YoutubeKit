@@ -310,8 +310,9 @@ export function loadSavedQueue(state: SavedState, savedQueue: SavedQueue, replac
 export function getQueueStart(queue: string[], videoId: string | null, fromBeginning = false): {
   index: number;
   positionSeconds?: number;
+  restartQueue?: boolean;
 } {
-  if (fromBeginning) return { index: 0, positionSeconds: 0 };
+  if (fromBeginning) return { index: 0, positionSeconds: 0, restartQueue: true };
   return { index: Math.max(0, videoId === null ? -1 : queue.indexOf(videoId)) };
 }
 

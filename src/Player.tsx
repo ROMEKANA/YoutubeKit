@@ -19,7 +19,7 @@ interface Props {
   restartNearEndSeconds?: number;
   active: boolean;
   onClose: () => void;
-  onPlaybackProgress?: (videoId: string, positionSeconds: number, recordedAt: number) => void;
+  onPlaybackProgress?: (videoId: string, positionSeconds: number, recordedAt: number, restart?: boolean) => void;
   onCompleteChange?: (complete: boolean) => void;
   onVideoPlaying?: (video: Video) => void;
   onSaveQueue?: (videoIds: string[]) => void;
@@ -41,7 +41,7 @@ export interface PlayerLayoutDiagnostic {
 }
 
 export interface PlayerHandle {
-  startAt: (position: number, positionSeconds?: number) => boolean;
+  startAt: (position: number, positionSeconds?: number, restartQueue?: boolean) => boolean;
   endSession: () => void;
   togglePlayback: () => "playing" | "paused" | null;
   seekBy: (seconds: number) => boolean;
@@ -156,6 +156,7 @@ export function Player({
   const queueDrag = useRef<{ from: number; to: number } | null>(null);
   const [draggedRow, setDraggedRow] = useState<{ from: number; to: number } | null>(null);
   const restoreAfterEdit = useRef<QueueEditStart | null>(null);
+  const restartOnFirstPlay = useRef(new Set<string>());
   const loadingEdit = useRef<{ ids: string[]; index: number } | null>(null);
   const playbackWatch = useRef<number | null>(null);
   const requestedIndex = useRef<number | null>(null);
@@ -223,10 +224,10 @@ export function Player({
     videoId: string;
     positionSeconds: number;
     recordedAt: number;
-  }) {
+  }, restart = false) {
     lastPositionSavedAt.current = Date.now();
     recordedQueuePositions.current[sample.videoId] = sample.positionSeconds;
-    onPlaybackProgressRef.current?.(sample.videoId, sample.positionSeconds, sample.recordedAt);
+    onPlaybackProgressRef.current?.(sample.videoId, sample.positionSeconds, sample.recordedAt, restart);
   }
 
   // 間隔保存が有効な時は位置をメモリ上でも観測し、動画切替時に直前の位置を保存する。
@@ -309,6 +310,12 @@ export function Player({
     const explicit = explicitStart.current;
     restoreAfterEdit.current = null;
     explicitStart.current = null;
+    // 再生開始が通知された動画だけ、そのセッションで一度だけ0秒を記録する。
+    if (restartOnFirstPlay.current.delete(video.id)) {
+      if (instance.getCurrentTime() >= 0.5) instance.seekTo(0, true);
+      persistPlaybackSample({ videoId: video.id, positionSeconds: 0, recordedAt: Date.now() }, true);
+      return;
+    }
     let seconds = 0;
     if (edit?.videoId === video.id) {
       seconds = edit.seconds;
@@ -376,7 +383,8 @@ export function Player({
   useImperativeHandle(
     ref,
     () => ({
-      startAt(position, positionSeconds) {
+      startAt(position, positionSeconds, restartQueue = false) {
+        restartOnFirstPlay.current = new Set(restartQueue ? videosRef.current.map((video) => video.id) : []);
         const startPosition =
           position >= 0 && position < videos.length ? position : 0;
         const startSeconds =
@@ -397,6 +405,7 @@ export function Player({
         return true;
       },
       endSession() {
+        restartOnFirstPlay.current.clear();
         startRequested.current = null;
         explicitStart.current = null;
         clearPlaybackWatch();
@@ -570,6 +579,7 @@ export function Player({
                 setStatus("再生中");
                 if (document.hidden) target.pauseVideo();
               } else if (action === "complete") {
+                restartOnFirstPlay.current.clear();
                 clearPlaybackWatch();
                 requestedIndex.current = null;
                 setPlaying(false);
@@ -737,7 +747,10 @@ export function Player({
     const editIndex = next.findIndex((video) => video.id === saved.videoId);
     const ids = next.map((video) => video.id);
     loadingEdit.current = { ids, index: editIndex };
-    restoreAfterEdit.current = saved;
+    const start = restartOnFirstPlay.current.has(saved.videoId)
+      ? { ...saved, seconds: 0 }
+      : saved;
+    restoreAfterEdit.current = start;
     videosRef.current = next;
     setEditedQueue({ source: sourceVideos, videos: next });
     setReady(false);
@@ -745,15 +758,15 @@ export function Player({
     setIndex(editIndex);
     onQueueEdit(next);
     // 既存iframeに対し、編集を確定したタップやドラッグの中で再生を要求する。
-    if (saved.autoplay && !document.hidden) {
+    if (start.autoplay && !document.hidden) {
       watchPlayback(instance, editIndex, () => {
-        if (loadingEdit.current) instance.loadPlaylist(ids, editIndex, saved.seconds);
+        if (loadingEdit.current) instance.loadPlaylist(ids, editIndex, start.seconds);
         else instance.playVideo();
       });
-      instance.loadPlaylist(ids, editIndex, saved.seconds);
+      instance.loadPlaylist(ids, editIndex, start.seconds);
     } else {
       setResumeNotice("");
-      instance.cuePlaylist(ids, editIndex, saved.seconds);
+      instance.cuePlaylist(ids, editIndex, start.seconds);
     }
   }
 

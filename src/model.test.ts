@@ -67,7 +67,7 @@ describe("キューと保存データ", () => {
     expect(getQueueStart(queue, "eRsGyueVLvQ")).toEqual({ index: 1 });
     expect(getQueueStart(queue, "9bZkp7q19f0")).toEqual({ index: 0 });
     expect(getQueueStart(queue, null)).toEqual({ index: 0 });
-    expect(getQueueStart(queue, "eRsGyueVLvQ", true)).toEqual({ index: 0, positionSeconds: 0 });
+    expect(getQueueStart(queue, "eRsGyueVLvQ", true)).toEqual({ index: 0, positionSeconds: 0, restartQueue: true });
   });
   it("旧形式の保存キューを追加しても、手動で追加したときと同じ状態になる", () => {
     const state = {
