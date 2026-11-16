@@ -9,6 +9,7 @@ import {
 import { flushSync } from "react-dom";
 import { version as appVersion } from "../package.json";
 import {
+  addToQueue,
   catalogAutoRefreshIntervals,
   createSavedQueueId,
   getQueueStart,
@@ -235,7 +236,9 @@ function CatalogApp({
   const [hiddenVideoToRestore, setHiddenVideoToRestore] = useState<string | null>(null);
   const [limit, setLimit] = useState(saved.settings.initialCount);
   const [toast, setToast] = useState("");
-  const [session, setSession] = useState<Video[] | null>(null);
+  const [session, setSession] = useState<{ videos: Video[]; single: boolean } | null>(null);
+  // 一覧の操作メニューを開いた時点で、単独再生用の1本を準備する。
+  const singleQueue = useMemo(() => menuVideo && panel === null ? [menuVideo] : null, [menuVideo, panel]);
   const [theater, setTheater] = useState(false);
   const [playbackComplete, setPlaybackComplete] = useState(false);
   const playerHandle = useRef<PlayerHandle>(null);
@@ -454,6 +457,25 @@ function CatalogApp({
     );
   }
 
+  function addQueueVideo(id: string) {
+    setSaved((state) => ({ ...state, queue: addToQueue(state.queue, id) }));
+    setMenuVideo(null);
+    setToast("キューに追加しました");
+  }
+
+  function moveQueueVideoToFront(id: string) {
+    setSaved((state) => {
+      const index = state.queue.indexOf(id);
+      if (index === 0) return state;
+      return {
+        ...state,
+        queue: index < 0 ? [id, ...state.queue] : moveItem(state.queue, index, 0),
+      };
+    });
+    setMenuVideo(null);
+    setToast("キューの先頭に置きました");
+  }
+
   function removeQueueVideo(id: string) {
     setSaved((state) => ({
       ...state,
@@ -633,11 +655,21 @@ function CatalogApp({
           from === "resume" ? saved.resumeVideoId : from.videoId,
           saved.playbackPositions,
         );
-    // 準備済みプレーヤーを同じタップ処理内で表示し、iPhoneの再生許可を維持する。
+    beginPlayback(playableQueue, start, false);
+  }
+
+  function startSinglePlayback() {
+    if (!singleQueue) return;
+    const positionSeconds = saved.playbackPositions[singleQueue[0].id] ?? 0;
+    beginPlayback(singleQueue, { index: 0, positionSeconds }, true);
+  }
+
+  // 準備済みプレーヤーを同じタップ処理内で表示し、iPhoneの再生許可を維持する。
+  function beginPlayback(videos: Video[], start: { index: number; positionSeconds: number }, single: boolean) {
     flushSync(() => {
       setPanel(null);
       setMenuVideo(null);
-      setSession(playableQueue);
+      setSession({ videos, single });
     });
     playerHandle.current?.startAt(start.index, start.positionSeconds);
     window.scrollTo({ top: 0 });
@@ -651,7 +683,7 @@ function CatalogApp({
 
   // ロゴから一覧の初期位置へ戻し、保存キューや表示設定は維持する。
   function returnToCatalogHome() {
-    playerHandle.current?.endSession();
+    if (session) playerHandle.current?.endSession();
     setTheater(false);
     setPanel(null);
     setMenuVideo(null);
@@ -837,11 +869,11 @@ function CatalogApp({
             {storageError}
           </p>
         )}
-        {(session || canPlay) && (
+        {(session || singleQueue || canPlay) && (
           <Player
             ref={playerHandle}
             active={!!session}
-            videos={session ?? playableQueue}
+            videos={session?.videos ?? singleQueue ?? playableQueue}
             playbackPositions={saved.playbackPositions}
             saveIntervalSeconds={settings.playbackSaveIntervalSeconds}
             resumePlaybackPosition={settings.resumePlaybackPosition}
@@ -849,23 +881,24 @@ function CatalogApp({
             onClose={endPlayback}
             onCompleteChange={setPlaybackComplete}
             onVideoPlaying={recordChannelWatch}
-            onPlaybackProgress={(videoId, positionSeconds) =>
+            onPlaybackProgress={(videoId, positionSeconds) => {
+              if (!session) return;
               setSaved((state) => {
+                // 単独再生の位置は動画履歴に記録し、キューの再開先は保持する。
+                const resumeVideoId = session.single ? state.resumeVideoId : videoId;
                 const previousPosition = state.playbackPositions[videoId] ?? 0;
-                if (
-                  state.resumeVideoId === videoId &&
-                  previousPosition === positionSeconds
-                )
+                const changedPosition = positionSeconds > 0 && previousPosition !== positionSeconds;
+                if (!changedPosition && resumeVideoId === state.resumeVideoId)
                   return state;
-                const playbackPositions = { ...state.playbackPositions };
-                if (positionSeconds > 0)
-                  playbackPositions[videoId] = positionSeconds;
-                return { ...state, resumeVideoId: videoId, playbackPositions };
-              })
-            }
+                const playbackPositions = changedPosition
+                  ? { ...state.playbackPositions, [videoId]: positionSeconds }
+                  : state.playbackPositions;
+                return { ...state, resumeVideoId, playbackPositions };
+              });
+            }}
             onSaveQueue={() =>
               openSaveQueue(
-                (session ?? playableQueue).map((video) => video.id),
+                (session?.videos ?? playableQueue).map((video) => video.id),
                 null,
               )
             }
@@ -1972,21 +2005,36 @@ function CatalogApp({
                   <Icon name="play" />
                   この動画から再生
                 </button>
-                <button disabled={menuVideo.durationSeconds <= 0} onClick={() => markVideoWatched(menuVideo)}>
-                  視聴済みとしてマーク
-                </button>
               </>
             ) : (
-              <button
-                onClick={() => {
-                  toggleQueue(menuVideo);
-                  setMenuVideo(null);
-                }}
-              >
-                <Icon name={saved.queue.includes(menuVideo.id) ? "close" : "plus"} />
-                {saved.queue.includes(menuVideo.id) ? "キューから削除" : "キューに追加"}
-              </button>
+              <>
+                {saved.queue.includes(menuVideo.id) ? (
+                  <button onClick={() => removeQueueVideo(menuVideo.id)}>
+                    <Icon name="close" />
+                    キューから削除
+                  </button>
+                ) : (
+                  <button onClick={() => addQueueVideo(menuVideo.id)}>
+                    <Icon name="plus" />
+                    キューに追加
+                  </button>
+                )}
+                {saved.queue[0] !== menuVideo.id && (
+                  <button onClick={() => moveQueueVideoToFront(menuVideo.id)}>
+                    <Icon name="list" />
+                    {saved.queue.includes(menuVideo.id) ? "先頭に移動" : "キューの最初に追加"}
+                  </button>
+                )}
+                <button onClick={startSinglePlayback}>
+                  <Icon name="play" />
+                  この動画のみを再生
+                </button>
+              </>
             )}
+            <button disabled={menuVideo.durationSeconds <= 0} onClick={() => markVideoWatched(menuVideo)}>
+              <Icon name="check" />
+              視聴済みとしてマーク
+            </button>
             <button onClick={() => setVideoHidden(menuVideo.id, !saved.hidden.includes(menuVideo.id))}>
               <Icon name="eye" />
               {saved.hidden.includes(menuVideo.id)
