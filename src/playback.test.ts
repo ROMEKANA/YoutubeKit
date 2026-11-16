@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { getQueueEditStart, PlaylistTracker } from "./playback";
+import { canSamplePlaybackPosition, getQueueEditStart, PlaylistTracker } from "./playback";
 
 it("並べ替え・別の動画の削除では、再生中の動画IDと秒数を維持する", () => {
   const current = { videoId: "b", seconds: 42.5, autoplay: true };
@@ -18,6 +18,13 @@ it("再生中の動画を削除すると次へ進み、末尾の削除や空に�
     videoId: "a", seconds: 0, autoplay: false,
   });
   expect(getQueueEditStart(["b"], [], current)).toBeNull();
+});
+
+it("動画の切替直後と位置復元中は再生位置の保存を待つ", () => {
+  expect(canSamplePlaybackPosition(1, 1000, 2000, null)).toBe(false);
+  expect(canSamplePlaybackPosition(1, 3000, 2000, 92)).toBe(false);
+  expect(canSamplePlaybackPosition(92, 3000, 2000, 92)).toBe(true);
+  expect(canSamplePlaybackPosition(3, 3000, 2000, null)).toBe(true);
 });
 
 it("途中の終了では完了せず、最終動画を再生した後だけ完了する", () => {

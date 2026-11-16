@@ -33,7 +33,6 @@ import {
 } from "./model";
 import { Icon } from "./Icon";
 import { Player, type PlayerHandle } from "./Player";
-import type { QueueEditStart } from "./playback";
 import { TheaterControls } from "./TheaterControls";
 import { addLatestChannelTimes, readLatestChannelTimes, readSavedVideos, useCatalog, type CatalogController } from "./useCatalog";
 import { usePwa, type PwaController } from "./usePwa";
@@ -240,7 +239,6 @@ function CatalogApp({
   const [session, setSession] = useState<{
     videos: Video[];
     single: boolean;
-    editStart?: QueueEditStart;
   } | null>(null);
   // 一覧の操作メニューを開いた時点で、単独再生用の1本を準備する。
   const singleQueue = useMemo(() => menuVideo && panel === null ? [menuVideo] : null, [menuVideo, panel]);
@@ -495,6 +493,7 @@ function CatalogApp({
     setSaved((state) => ({
       ...state,
       watchedChannelAt: { ...state.watchedChannelAt, [video.channelId]: watchedAt },
+      resumeVideoId: session && !session.single ? video.id : state.resumeVideoId,
     }));
   }
 
@@ -660,17 +659,18 @@ function CatalogApp({
           from === "resume" ? saved.resumeVideoId : from.videoId,
           saved.playbackPositions,
         );
-    beginPlayback(playableQueue, start, false);
+    const forceBeginning = from === "beginning" ||
+      (from === "resume" && !saved.queue.includes(saved.resumeVideoId ?? ""));
+    beginPlayback(playableQueue, { index: start.index, positionSeconds: forceBeginning ? 0 : undefined }, false);
   }
 
   function startSinglePlayback() {
     if (!singleQueue) return;
-    const positionSeconds = saved.playbackPositions[singleQueue[0].id] ?? 0;
-    beginPlayback(singleQueue, { index: 0, positionSeconds }, true);
+    beginPlayback(singleQueue, { index: 0 }, true);
   }
 
   // 準備済みプレーヤーを同じタップ処理内で表示し、iPhoneの再生許可を維持する。
-  function beginPlayback(videos: Video[], start: { index: number; positionSeconds: number }, single: boolean) {
+  function beginPlayback(videos: Video[], start: { index: number; positionSeconds?: number }, single: boolean) {
     flushSync(() => {
       setPanel(null);
       setMenuVideo(null);
@@ -879,9 +879,9 @@ function CatalogApp({
             ref={playerHandle}
             active={!!session}
             videos={session?.videos ?? singleQueue ?? playableQueue}
-            queueEditStart={session?.editStart}
-            onQueueEdit={session && !session.single ? (videos, editStart) => {
-              setSession({ videos, editStart, single: false });
+            onQueueEdit={session && !session.single ? (videos) => {
+              const queue = videos.map((video) => video.id);
+              setSaved((state) => ({ ...state, queue }));
             } : undefined}
             playbackPositions={saved.playbackPositions}
             saveIntervalSeconds={settings.playbackSaveIntervalSeconds}
@@ -905,12 +905,7 @@ function CatalogApp({
                 return { ...state, resumeVideoId, playbackPositions };
               });
             }}
-            onSaveQueue={() =>
-              openSaveQueue(
-                (session?.videos ?? playableQueue).map((video) => video.id),
-                null,
-              )
-            }
+            onSaveQueue={(videoIds) => openSaveQueue(videoIds, null)}
           />
         )}
         {!session && (

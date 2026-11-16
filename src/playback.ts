@@ -22,6 +22,12 @@ export function getQueueEditStart(
   };
 }
 
+// 切替直後と、保存位置へ移動中の古い時刻は履歴に使わない。
+export function canSamplePlaybackPosition(seconds: number, now: number, after: number, target: number | null): boolean {
+  return Number.isFinite(seconds) && seconds >= 0 && now >= after &&
+    (target === null || seconds >= target - 1);
+}
+
 // 進行は公式プレーヤーに任せ、最終動画の終了だけをアプリ側で判定する。
 // ENDEDごとにnextVideoを呼ぶ方式は、公式の自動遷移と二重になるため使わない。
 export class PlaylistTracker {
