@@ -21,6 +21,7 @@ export const cloudIntervals = [0, 15, 30, 60, 120, 300, 600] as const;
 const localSettings = new Set([
   "densityPercent",
   "catalogAutoRefreshMinutes",
+  "channelSort",
   "theaterBrightness",
 ]);
 export const equal = (a: unknown, b: unknown) =>

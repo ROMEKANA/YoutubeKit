@@ -9,10 +9,13 @@ export interface Video {
   channelThumbnailUrl?: string;
 }
 
+export type ChannelSort = "name" | "latest" | "watched";
+
 export interface Settings {
   densityPercent: number;
   initialCount: number;
   catalogAutoRefreshMinutes: number;
+  channelSort: ChannelSort;
   additionalCount: number;
   excludeShort: boolean;
   shortThreshold: number;
@@ -42,6 +45,7 @@ export interface SavedState {
   savedQueues: SavedQueue[];
   hidden: string[];
   hiddenAt: Record<string, number>;
+  watchedChannelAt: Record<string, number>;
   settings: Settings;
 }
 
@@ -54,6 +58,7 @@ export const defaultSettings: Settings = {
   densityPercent: 100,
   initialCount: 30,
   catalogAutoRefreshMinutes: 30,
+  channelSort: "name",
   additionalCount: 30,
   excludeShort: true,
   shortThreshold: 180,
@@ -77,6 +82,7 @@ export function restoreState(raw: string | null): SavedState {
     savedQueues: [],
     hidden: [],
     hiddenAt: {},
+    watchedChannelAt: {},
     settings: { ...defaultSettings },
   };
   if (!raw) return empty;
@@ -191,6 +197,13 @@ export function restoreState(raw: string | null): SavedState {
         const time = value.hiddenAt?.[id];
         return Number.isSafeInteger(time) && time > 0 ? [[id, time]] : [];
       })),
+      watchedChannelAt: Object.fromEntries(
+        Object.entries(value.watchedChannelAt ?? {}).flatMap(([id, time]) =>
+          /^[\w-]{1,40}$/.test(id) && typeof time === "number" && Number.isSafeInteger(time) && time > 0
+            ? [[id, time] as const]
+            : [],
+        ),
+      ),
       settings: {
         watchedMinPercent,
         watchedMaxPercent,
@@ -200,6 +213,7 @@ export function restoreState(raw: string | null): SavedState {
           (minutes) => minutes === settings.catalogAutoRefreshMinutes,
         ) ?? defaultSettings.catalogAutoRefreshMinutes,
         additionalCount: number(settings.additionalCount, 30, 100),
+        channelSort: settings.channelSort === "latest" || settings.channelSort === "watched" ? settings.channelSort : "name",
         excludeShort:
           typeof settings.excludeShort === "boolean"
             ? settings.excludeShort
@@ -346,7 +360,7 @@ export function getVideoFilters(settings: Settings, hidden: string[]): VideoFilt
 export function createVideoFilter(
   filters: VideoFilters,
   positions: Record<string, number> = {},
-): (video: Video) => boolean {
+): (video: Pick<Video, "id" | "durationSeconds">) => boolean {
   const hidden = new Set(filters.hidden);
   return (video) =>
     !hidden.has(video.id) &&
@@ -356,7 +370,7 @@ export function createVideoFilter(
 }
 
 // 未視聴・長さ不明は0%とし、保存位置が動画時間を超えた場合も100%までに収める。
-export function isWithinWatchedRange(video: Video, positionSeconds = 0, minPercent = 0, maxPercent = 100): boolean {
+export function isWithinWatchedRange(video: Pick<Video, "durationSeconds">, positionSeconds = 0, minPercent = 0, maxPercent = 100): boolean {
   if (video.durationSeconds <= 0) return minPercent === 0;
   const position = Number.isFinite(positionSeconds)
     ? Math.min(video.durationSeconds, Math.max(0, positionSeconds)) : 0;

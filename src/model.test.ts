@@ -175,6 +175,7 @@ describe("キューと保存データ", () => {
       ],
       hidden: ["aqz-KE-bpKQ"],
       hiddenAt: {},
+      watchedChannelAt: {},
       settings: { ...defaultSettings, densityPercent: 150 },
     };
     expect(restoreState(JSON.stringify(data))).toEqual(data);

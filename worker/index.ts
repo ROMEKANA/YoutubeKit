@@ -9,7 +9,7 @@ import {
 } from "./auth";
 import { missingConfiguration } from "./config";
 import { AppError } from "./errors";
-import { getCatalog, getSavedVideos, startSync, stepSync } from "./sync";
+import { getCatalog, getChannelVideoOrder, getSavedVideos, startSync, stepSync } from "./sync";
 import { loadHistory } from "./history";
 import { cleanup } from "./cleanup";
 import { readCloud, writeCloud, saveBackup, readBackups } from "./cloud";
@@ -62,6 +62,7 @@ app.get("/auth/callback", finishLogin);
 app.post("/api/logout", logout);
 app.post("/api/disconnect", disconnect);
 app.get("/api/catalog", getCatalog);
+app.get("/api/channel-video-order", getChannelVideoOrder);
 app.get("/api/cloud/state", readCloud);
 app.post("/api/cloud/state", writeCloud);
 app.get("/api/cloud/backups", readBackups);

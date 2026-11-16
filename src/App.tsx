@@ -27,13 +27,14 @@ import {
   selectPlaybackPositions,
   restoreState,
   storageKey,
+  type ChannelSort,
   type Settings,
   type Video,
 } from "./model";
 import { Icon } from "./Icon";
 import { Player, type PlayerHandle } from "./Player";
 import { TheaterControls } from "./TheaterControls";
-import { readSavedVideos, useCatalog, type CatalogController } from "./useCatalog";
+import { addLatestChannelTimes, readLatestChannelTimes, readSavedVideos, useCatalog, type CatalogController } from "./useCatalog";
 import { usePwa, type PwaController } from "./usePwa";
 import { useCloud } from "./useCloud";
 import { cloudIntervals } from "../shared/cloud";
@@ -42,6 +43,12 @@ type Panel =
   "channels" | "queue" | "savedQueues" | "savedQueuePreview" | "saveQueue" | "settings" | "hiddenVideos" | null;
 const thumbnail = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 const dateLabel = formatPublishedAt;
+const channelNameOrder = new Intl.Collator("ja", { numeric: true });
+const channelSortOptions: { key: ChannelSort; label: string }[] = [
+  { key: "name", label: "名前" },
+  { key: "latest", label: "最新の動画" },
+  { key: "watched", label: "最近視聴した" },
+];
 const durationLabel = (seconds: number) => seconds < 3600 ? `${seconds / 60}分` : `${seconds / 3600}時間`;
 
 // native dialogでフォーカス移動とEscapeによる閉じる操作を提供する。
@@ -220,6 +227,10 @@ function CatalogApp({
   const [saveQueueDefaultName, setSaveQueueDefaultName] = useState("");
   const [menuVideo, setMenuVideo] = useState<Video | null>(null);
   const [channelId, setChannelId] = useState("all");
+  const [channelTimes, setChannelTimes] = useState<ReadonlyMap<string, number>>(new Map());
+  const [channelSortLoading, setChannelSortLoading] = useState(false);
+  const [channelSortError, setChannelSortError] = useState("");
+  const channelSortRequest = useRef<AbortController | null>(null);
   const [hiddenPage, setHiddenPage] = useState(0);
   const [hiddenDetails, setHiddenDetails] = useState<Video[]>([]);
   const [hiddenVideoToRestore, setHiddenVideoToRestore] = useState<string | null>(null);
@@ -261,6 +272,10 @@ function CatalogApp({
   const canPlay =
     saved.queue.length > 0 && playableQueue.length === saved.queue.length;
   const channels = catalog.channels;
+  const orderedChannels = useMemo(() => [...channels].sort((a, b) =>
+    (channelTimes.get(b.id) ?? 0) - (channelTimes.get(a.id) ?? 0) ||
+    channelNameOrder.compare(a.title, b.title) || a.id.localeCompare(b.id),
+  ), [channels, channelTimes]);
   const filters = useMemo(() => getVideoFilters(settings, saved.hidden), [settings, saved.hidden]);
   const filterPositions = filters.watchedMinPercent > 0 || filters.watchedMaxPercent < 100
     ? saved.playbackPositions
@@ -281,6 +296,11 @@ function CatalogApp({
   const currentChannel =
     channels.find((channel) => channel.id === channelId)?.title ??
     "すべてのチャンネル";
+
+  useEffect(() => {
+    if (panel !== "channels") return;
+    return () => channelSortRequest.current?.abort();
+  }, [panel]);
 
   // 別ブラウザで保存されたキューは、プレビュー時にも不足する動画情報を補う。
   useEffect(() => {
@@ -444,13 +464,23 @@ function CatalogApp({
     setToast("キューから削除しました");
   }
 
+  function recordChannelWatch(video: Video) {
+    const watchedAt = Date.now();
+    setSaved((state) => ({
+      ...state,
+      watchedChannelAt: { ...state.watchedChannelAt, [video.channelId]: watchedAt },
+    }));
+  }
+
   // 視聴済みの目印を付けても、キューを再開する動画は変えない。
   function markVideoWatched(video: Video) {
     if (video.durationSeconds <= 0) return;
     const position = Math.max(0, Math.floor(video.durationSeconds) - 1);
+    const watchedAt = Date.now();
     setSaved((state) => ({
       ...state,
       playbackPositions: { ...state.playbackPositions, [video.id]: position },
+      watchedChannelAt: { ...state.watchedChannelAt, [video.channelId]: watchedAt },
     }));
     setMenuVideo(null);
     setToast("視聴済みとしてマークしました");
@@ -490,6 +520,36 @@ function CatalogApp({
       ...state,
       settings: { ...state.settings, ...value },
     }));
+  }
+
+  // 開いた時点の絞り込みと履歴で順位を決め、モードを切り替えたときに再計算する。
+  function sortChannels(mode: ChannelSort) {
+    channelSortRequest.current?.abort();
+    setChannelSortLoading(false);
+    setChannelSortError("");
+    if (mode === "watched") {
+      setChannelTimes(new Map(Object.entries(saved.watchedChannelAt)));
+      return;
+    }
+    const times = new Map<string, number>();
+    setChannelTimes(times);
+    if (mode === "name") return;
+    if (catalog.isDemo) {
+      addLatestChannelTimes(times, videos, createVideoFilter(filters, filterPositions));
+      return;
+    }
+    if (!catalog.auth?.authenticated) return;
+    const controller = new AbortController();
+    channelSortRequest.current = controller;
+    setChannelSortLoading(true);
+    void readLatestChannelTimes(filters, filterPositions, channels.length, controller.signal).then((latestTimes) => {
+      if (!controller.signal.aborted) setChannelTimes(latestTimes);
+    }).catch(() => {
+      if (!controller.signal.aborted)
+        setChannelSortError("最新の動画を確認できませんでした。再試行してください。");
+    }).finally(() => {
+      if (!controller.signal.aborted) setChannelSortLoading(false);
+    });
   }
 
   function reorder(from: number, to: number) {
@@ -653,7 +713,10 @@ function CatalogApp({
           <button
             className="icon-button"
             aria-label="チャンネル一覧"
-            onClick={() => setPanel("channels")}
+            onClick={() => {
+              setPanel("channels");
+              sortChannels(settings.channelSort);
+            }}
             disabled={!!session}
           >
             <Icon name="menu" />
@@ -800,6 +863,7 @@ function CatalogApp({
             restartNearEndSeconds={settings.restartNearEndSeconds}
             onClose={endPlayback}
             onCompleteChange={setPlaybackComplete}
+            onVideoPlaying={recordChannelWatch}
             onPlaybackProgress={(videoId, positionSeconds) =>
               setSaved((state) => {
                 const previousPosition = state.playbackPositions[videoId] ?? 0;
@@ -1168,9 +1232,19 @@ function CatalogApp({
 
       {panel === "channels" && (
         <Modal title="チャンネル" drawer onClose={() => setPanel(null)}>
-          <p className="panel-note">
-            {catalog.isDemo ? "サンプルチャンネル" : "登録チャンネル"}
-          </p>
+          <div className="channel-sort-options" role="group" aria-label="チャンネルの並べ替え">
+            {channelSortOptions.map(({ key, label }) => (
+              <button key={key} className="secondary" aria-pressed={settings.channelSort === key}
+                onClick={() => {
+                  updateSettings({ channelSort: key });
+                  sortChannels(key);
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {channelSortLoading && <p className="panel-note" role="status">最新の動画を確認中…</p>}
+          {channelSortError && <p className="panel-note" role="alert">{channelSortError}</p>}
           <nav className="channel-nav">
             <button
               className={channelId === "all" ? "selected" : ""}
@@ -1184,7 +1258,7 @@ function CatalogApp({
               </span>
               すべてのチャンネル
             </button>
-            {channels.map((channel) => (
+            {orderedChannels.map((channel) => (
               <button
                 key={channel.id}
                 className={channelId === channel.id ? "selected" : ""}

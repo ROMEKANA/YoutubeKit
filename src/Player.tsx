@@ -21,6 +21,7 @@ interface Props {
   onClose: () => void;
   onPlaybackProgress?: (videoId: string, positionSeconds: number) => void;
   onCompleteChange?: (complete: boolean) => void;
+  onVideoPlaying?: (video: Video) => void;
   onSaveQueue?: () => void;
   videoMaximized?: boolean;
   onToggleVideoMaximized?: () => void;
@@ -56,6 +57,7 @@ export function Player({
   onClose,
   onPlaybackProgress,
   onCompleteChange,
+  onVideoPlaying,
   onSaveQueue,
   videoMaximized = false,
   onToggleVideoMaximized,
@@ -176,6 +178,8 @@ export function Player({
   const resumePlaybackPositionRef = useRef(resumePlaybackPosition);
   const restartNearEndSecondsRef = useRef(restartNearEndSeconds);
   const onPlaybackProgressRef = useRef(onPlaybackProgress);
+  const onVideoPlayingRef = useRef(onVideoPlaying);
+  onVideoPlayingRef.current = onVideoPlaying;
   videosRef.current = videos;
   playbackPositionsRef.current = playbackPositions;
   saveIntervalSecondsRef.current = saveIntervalSeconds;
@@ -428,6 +432,8 @@ export function Player({
                 resumeCheckedVideoId.current = null;
               }
               if (event.data === 1) {
+                const video = videosRef.current[current];
+                if (video) onVideoPlayingRef.current?.(video);
                 if (complete) setComplete(false);
                 lastPlayingIndex.current = current;
                 setPlaying(true);

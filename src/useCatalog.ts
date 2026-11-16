@@ -170,6 +170,49 @@ export async function readSavedVideos(ids: string[], signal: AbortSignal): Promi
   return videos;
 }
 
+type ChannelVideo = Pick<Video, "id" | "channelId" | "publishedAt" | "durationSeconds">;
+
+// 候補の公開日時を比較し、条件に合う最新1本の日時だけをチャンネルごとに残す。
+export function addLatestChannelTimes(
+  times: Map<string, number>,
+  candidates: ChannelVideo[],
+  matches: ReturnType<typeof createVideoFilter>,
+) {
+  for (const video of candidates) {
+    if (!matches(video)) continue;
+    const published = Date.parse(video.publishedAt);
+    if (Number.isFinite(published) && published > (times.get(video.channelId) ?? 0))
+      times.set(video.channelId, published);
+  }
+}
+
+export async function readLatestChannelTimes(
+  filters: VideoFilters,
+  positions: Record<string, number> | undefined,
+  channelCount: number,
+  signal: AbortSignal,
+): Promise<Map<string, number>> {
+  const matches = createVideoFilter(filters, positions);
+  const times = new Map<string, number>();
+  const query = new URLSearchParams({
+    minDuration: String(filters.minDuration),
+    maxDuration: String(filters.maxDuration),
+  });
+  // 普段の一覧に含まれないチャンネルも、取得済み候補を公開順に読み取って順位を求める。
+  while (times.size < channelCount) {
+    const page = await request(`/api/channel-video-order?${query}`, {}, signal) as {
+      videos: ChannelVideo[];
+      hasMore: boolean;
+    };
+    addLatestChannelTimes(times, page.videos, matches);
+    const last = page.videos.at(-1);
+    if (!page.hasMore || !last) break;
+    query.set("before", last.publishedAt);
+    query.set("afterId", last.id);
+  }
+  return times;
+}
+
 function parseProgress(value: unknown): Progress {
   if (!value || typeof value !== "object")
     throw new Error("更新の応答が正しくありません。");

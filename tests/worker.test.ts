@@ -511,6 +511,34 @@ describe("認証とAPIアクセス（Workers + 実D1バインディング）", (
 });
 
 describe("チャンネル別の表示範囲と履歴", () => {
+  it("チャンネル順位の候補を認証付きで公開順に返し、公開日が同じページ境界を処理する", async () => {
+    const path = `${origin}/api/channel-video-order`;
+    expect((await mf.dispatchFetch(path)).status).toBe(401);
+    await authenticated();
+    await runSync();
+    const date = published(30);
+    await db.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<251)
+       INSERT INTO videos(sub,video_id,channel_id,title,published_at,duration_seconds,embeddable,availability,last_fetched_at)
+       SELECT ?,printf('%011d',70000000000+i),?,'同じ公開日の動画',?,7200,1,'public',? FROM n`,
+    ).bind(sub, channelA, date, seconds()).run();
+    const headers = { Cookie: sessionCookie };
+    const query = new URLSearchParams({ minDuration: "7199", maxDuration: "7200" });
+    const readPage = async () => {
+      const result = await mf.dispatchFetch(`${path}?${query}`, { headers });
+      expect(result.status, await result.clone().text()).toBe(200);
+      return result.json<{ videos: { id: string; publishedAt: string; durationSeconds: number }[]; hasMore: boolean }>();
+    };
+    const first = await readPage();
+    expect(first.videos).toHaveLength(250);
+    expect(first.videos.every((video) => video.durationSeconds === 7200)).toBe(true);
+    expect(first.hasMore).toBe(true);
+    query.set("before", date);
+    query.set("afterId", first.videos[249].id);
+    const last = await readPage();
+    expect(last.videos.map((video) => video.id)).toEqual(["70000000251"]);
+    expect(last.hasMore).toBe(false);
+  });
   it("履歴取得と保存キュー取得も認証・CSRF・入力を検証する", async () => {
     expect(
       (await post("/api/channel/history", { channelId: channelA })).status,

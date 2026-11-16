@@ -690,6 +690,48 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
   }
 }
 
+function catalogDurationBounds(c: WorkerContext) {
+  const minDuration = Number(c.req.query("minDuration") ?? "-1");
+  const maxDuration = Number(c.req.query("maxDuration") ?? "-1");
+  requireCondition(
+    Number.isInteger(minDuration) && minDuration >= -1 && minDuration <= 18000 &&
+      Number.isInteger(maxDuration) && maxDuration >= -1 && maxDuration <= 18000 &&
+      (maxDuration < 0 || minDuration < maxDuration),
+    "INVALID_DURATION",
+    "除外時間の指定が正しくありません。",
+  );
+  return { minDuration, maxDuration };
+}
+
+// チャンネルの順位計算に必要な項目だけを返し、YouTubeへの追加取得は行わない。
+export async function getChannelVideoOrder(c: WorkerContext): Promise<Response> {
+  const session = await requireSession(c);
+  const { minDuration, maxDuration } = catalogDurationBounds(c);
+  const before = c.req.query("before") ?? "";
+  const afterId = c.req.query("afterId") ?? "";
+  requireCondition(
+    (!before && !afterId) || (before.length <= 40 && Number.isFinite(Date.parse(before)) && /^[\w-]{11}$/.test(afterId)),
+    "INVALID_CURSOR",
+    "動画の続き位置が正しくありません。",
+  );
+  const limit = 250;
+  const cutoff = now() - maxAge;
+  const cursor = before ? "AND v.published_at <= ? AND (v.published_at < ? OR v.video_id > ?)" : "";
+  const rows = await c.env.DB.prepare(
+    `SELECT v.video_id AS id, v.channel_id AS channelId, v.published_at AS publishedAt, v.duration_seconds AS durationSeconds
+    FROM videos v JOIN channels c ON c.sub = v.sub AND c.channel_id = v.channel_id
+    WHERE v.sub = ? AND c.subscribed = 1 AND v.last_fetched_at >= ? AND c.last_synced_at >= ?
+      AND v.availability = 'public' AND v.embeddable = 1
+      AND v.duration_seconds > ? AND (? < 0 OR v.duration_seconds <= ?)
+      ${cursor}
+    ORDER BY v.published_at DESC, v.video_id LIMIT ?`,
+  ).bind(
+    session.sub, cutoff, cutoff, minDuration, maxDuration, maxDuration,
+    ...(before ? [before, before, afterId] : []), limit + 1,
+  ).all();
+  return c.json({ videos: rows.results.slice(0, limit), hasMore: rows.results.length > limit });
+}
+
 // Google側の一時障害時でも、認証済みの所有者にはD1の取得済み情報を返す。
 export async function getCatalog(c: WorkerContext): Promise<Response> {
   const session = await requireSession(c);
@@ -700,15 +742,7 @@ export async function getCatalog(c: WorkerContext): Promise<Response> {
     "チャンネルの指定が正しくありません。",
   );
   const limit = boundedInteger(c.req.query("limit") ?? "30", 30, 5000);
-  const minDuration = Number(c.req.query("minDuration") ?? "-1");
-  const maxDuration = Number(c.req.query("maxDuration") ?? "-1");
-  requireCondition(
-    Number.isInteger(minDuration) && minDuration >= -1 && minDuration <= 18000 &&
-      Number.isInteger(maxDuration) && maxDuration >= -1 && maxDuration <= 18000 &&
-      (maxDuration < 0 || minDuration < maxDuration),
-    "INVALID_DURATION",
-    "除外時間の指定が正しくありません。",
-  );
+  const { minDuration, maxDuration } = catalogDurationBounds(c);
   const cutoff = now() - maxAge;
   await c.env.DB.prepare(
     "DELETE FROM videos WHERE sub = ? AND last_fetched_at < ?",

@@ -835,6 +835,23 @@ small {
 .drawer .modal-header h2 {
   font-size: 18px;
 }
+.channel-sort-options {
+  display: grid;
+  grid-template-columns: 0.75fr 1fr 1.15fr;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.channel-sort-options button {
+  padding: 5px 2px;
+  font-size: 11px;
+  justify-content: center;
+  white-space: nowrap;
+}
+.channel-sort-options button[aria-pressed="true"] {
+  color: #fff;
+  background: #244b41;
+  border-color: #244b41;
+}
 .channel-nav {
   display: grid;
   gap: 8px;
@@ -1538,6 +1555,9 @@ small {
   .back {
     margin-bottom: 22px;
   }
+}
+@media (max-width: 420px) {
+  .header-actions .icon-button { width: 34px; }
 }
 @media (max-width: 360px) {
   .brand img { display: none; }
