@@ -725,11 +725,7 @@ export function Player({
         {onSaveQueue && (
           <button
             className="secondary save-playing-queue"
-            onClick={() => {
-              const instance = player.current;
-              if (instance) persistCurrentPlayback(instance);
-              onSaveQueue();
-            }}
+            onClick={onSaveQueue}
           >
             このキューを保存
           </button>

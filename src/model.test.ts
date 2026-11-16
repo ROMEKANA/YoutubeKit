@@ -7,12 +7,11 @@ import {
   formatDuration,
   getQueueStart,
   moveItem,
-  mergeSavedQueue,
+  loadSavedQueue,
   newestSavedQueuesFirst,
   playbackSaveIntervals,
   parseVideos,
   restoreState,
-  selectPlaybackPositions,
   toggleQueueItem,
   createVideoFilter,
   getVideoFilters,
@@ -78,60 +77,44 @@ describe("キューと保存データ", () => {
       positionSeconds: 0,
     });
   });
-  it("保存キューの再開動画がある場合だけ、現在の履歴を上書きする", () => {
-    const currentQueue = ["aqz-KE-bpKQ"];
-    const base = {
-      id: "550e8400-e29b-41d4-a716-446655440000",
-      name: "保存キュー",
-      videoIds: ["eRsGyueVLvQ"],
-      playbackPositions: { eRsGyueVLvQ: 91 },
-    };
-    expect(
-      mergeSavedQueue(
-        currentQueue,
-        "aqz-KE-bpKQ",
-        { "aqz-KE-bpKQ": 45 },
-        {
-          ...base,
-          resumeVideoId: "eRsGyueVLvQ",
-        },
-      ),
-    ).toEqual({
-      queue: ["aqz-KE-bpKQ", "eRsGyueVLvQ"],
-      resumeVideoId: "eRsGyueVLvQ",
-      playbackPositions: { "aqz-KE-bpKQ": 45, eRsGyueVLvQ: 91 },
-    });
-    expect(
-      mergeSavedQueue(
-        currentQueue,
-        "aqz-KE-bpKQ",
-        { "aqz-KE-bpKQ": 45 },
-        {
-          ...base,
-          resumeVideoId: null,
-        },
-      ),
-    ).toEqual({
-      queue: ["aqz-KE-bpKQ", "eRsGyueVLvQ"],
+  it("旧形式の保存キューを追加しても、手動で追加したときと同じ状態になる", () => {
+    const state = {
+      ...restoreState(null),
+      queue: ["aqz-KE-bpKQ"],
       resumeVideoId: "aqz-KE-bpKQ",
       playbackPositions: { "aqz-KE-bpKQ": 45, eRsGyueVLvQ: 91 },
+    };
+    const savedQueue = {
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      name: "保存キュー",
+      videoIds: ["eRsGyueVLvQ", "aqz-KE-bpKQ", "R6MlUcmOul8"],
+      resumeVideoId: "eRsGyueVLvQ",
+      playbackPositions: { eRsGyueVLvQ: 12 },
+    };
+    expect(loadSavedQueue(state, savedQueue, false)).toEqual({
+      ...state,
+      queue: savedQueue.videoIds.reduce(addToQueue, state.queue),
     });
   });
-  it("保存キューに位置がない動画は保存時点の先頭位置で上書きする", () => {
-    expect(
-      mergeSavedQueue(
-        ["aqz-KE-bpKQ"],
-        "aqz-KE-bpKQ",
-        { eRsGyueVLvQ: 91 },
-        {
-          id: "550e8400-e29b-41d4-a716-446655440000",
-          name: "保存キュー",
-          videoIds: ["eRsGyueVLvQ"],
-          resumeVideoId: "eRsGyueVLvQ",
-          playbackPositions: {},
-        },
-      ).playbackPositions,
-    ).toEqual({});
+  it("旧形式の保存キューで置き換えると、履歴を残して1本目の0秒から開始する", () => {
+    const state = {
+      ...restoreState(null),
+      queue: ["aqz-KE-bpKQ"],
+      resumeVideoId: "aqz-KE-bpKQ",
+      playbackPositions: { eRsGyueVLvQ: 91 },
+    };
+    const savedQueue = {
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      name: "保存キュー",
+      videoIds: ["eRsGyueVLvQ", "aqz-KE-bpKQ"],
+      resumeVideoId: "aqz-KE-bpKQ",
+      playbackPositions: { eRsGyueVLvQ: 12 },
+    };
+    const loaded = loadSavedQueue(state, savedQueue, true);
+    expect(loaded.queue).toEqual(savedQueue.videoIds);
+    expect(loaded.playbackPositions).toEqual(state.playbackPositions);
+    expect(getQueueStart(loaded.queue, loaded.resumeVideoId, loaded.playbackPositions))
+      .toEqual({ index: 0, positionSeconds: 0 });
   });
   it("保存キュー用にUUIDを生成する", () => {
     expect(createSavedQueueId()).toMatch(
@@ -221,22 +204,13 @@ describe("キューと保存データ", () => {
       "同じ名前",
       "同じ名前",
     ]);
-    expect(savedQueues.map((queue) => queue.resumeVideoId)).toEqual([
-      "aqz-KE-bpKQ",
-      null,
-    ]);
-    expect(savedQueues.map((queue) => queue.playbackPositions)).toEqual([
-      { "aqz-KE-bpKQ": 12 },
-      {},
-    ]);
-  });
-  it("保存キューには対象動画の途中位置だけを取り込む", () => {
-    expect(
-      selectPlaybackPositions(
-        { "aqz-KE-bpKQ": 12, eRsGyueVLvQ: 0, R6MlUcmOul8: 33 },
-        ["aqz-KE-bpKQ", "eRsGyueVLvQ"],
-      ),
-    ).toEqual({ "aqz-KE-bpKQ": 12 });
+    expect(savedQueues[0].resumeVideoId).toBe("aqz-KE-bpKQ");
+    expect(savedQueues[0].playbackPositions).toEqual({ "aqz-KE-bpKQ": 12 });
+    expect(savedQueues[1]).toEqual({
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      name: "同じ名前",
+      videoIds: ["eRsGyueVLvQ"],
+    });
   });
   it("再生位置の保存間隔は指定候補だけを復元する", () => {
     for (const seconds of playbackSaveIntervals)

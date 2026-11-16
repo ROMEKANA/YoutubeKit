@@ -46,7 +46,7 @@ let extraUploadPage = false;
 const seconds = () => Math.floor(Date.now() / 1000);
 
 describe("クラウド同期API", () => {
-  const queue = { id: "12345678-1234-4123-8123-123456789abc", name: "保存キュー", videoIds: ["aqz-KE-bpKQ"], resumeVideoId: null, playbackPositions: {} };
+  const queue = { id: "12345678-1234-4123-8123-123456789abc", name: "保存キュー", videoIds: ["aqz-KE-bpKQ"] };
   async function change(key: string, value: unknown, base: number) {
     const response = await post("/api/cloud/state", { changes: [{ key, value: JSON.stringify(value), base }] });
     expect(response.status, await response.clone().text()).toBe(200);

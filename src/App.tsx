@@ -21,10 +21,9 @@ import {
   formatPublishedAt,
   readWarningDismissal,
   moveItem,
-  mergeSavedQueue,
+  loadSavedQueue,
   newestSavedQueuesFirst,
   playbackSaveIntervals,
-  selectPlaybackPositions,
   restoreState,
   storageKey,
   type ChannelSort,
@@ -581,11 +580,6 @@ function CatalogApp({
           id: createSavedQueueId(),
           name,
           videoIds: [...saveQueueVideoIds],
-          resumeVideoId: state.resumeVideoId,
-          playbackPositions: selectPlaybackPositions(
-            state.playbackPositions,
-            saveQueueVideoIds,
-          ),
         },
       ],
     }));
@@ -608,16 +602,7 @@ function CatalogApp({
     setSaved((state) => {
       const current = state.savedQueues.find((item) => item.id === selected.id);
       if (!current) return state;
-      const merged = mergeSavedQueue(
-        replace ? [] : state.queue,
-        replace ? null : state.resumeVideoId,
-        state.playbackPositions,
-        current,
-      );
-      // 旧形式などで対象外の再開IDが残っている場合は、置き換え後の先頭へ戻す。
-      if (replace && !merged.queue.some((id) => id === merged.resumeVideoId))
-        merged.resumeVideoId = null;
-      return { ...state, ...merged };
+      return loadSavedQueue(state, current, replace);
     });
     setPanel(savedQueuesReturnPanel);
     setToast(replace

@@ -12,9 +12,9 @@ describe("クラウド状態の統合", () => {
       playbackPositions: {},
     };
     const other = {
-      ...queue,
       id: "22345678-1234-4123-8123-123456789abc",
       name: "B",
+      videoIds: ["eRsGyueVLvQ"],
     };
     const state = restoreState(
       JSON.stringify({
@@ -38,7 +38,7 @@ describe("クラウド状態の統合", () => {
       ],
       true,
     );
-    expect(merged.savedQueues).toHaveLength(2);
+    expect(merged.savedQueues).toEqual([queue, other]);
     expect(merged.queue).toEqual(state.queue);
     expect(merged.playbackPositions["aqz-KE-bpKQ"]).toBe(10);
     expect(

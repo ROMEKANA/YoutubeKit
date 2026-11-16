@@ -34,8 +34,9 @@ export interface SavedQueue {
   id: string;
   name: string;
   videoIds: string[];
-  resumeVideoId: string | null;
-  playbackPositions: Record<string, number>;
+  // 旧形式の保存キューをクラウド同期やバックアップで保持するための項目。
+  resumeVideoId?: string | null;
+  playbackPositions?: Record<string, number>;
 }
 
 export interface SavedState {
@@ -148,6 +149,12 @@ export function restoreState(raw: string | null): SavedState {
           )
             return [];
           savedQueueIds.add(id);
+          if (
+            !Object.hasOwn(candidate, "resumeVideoId") &&
+            !Object.hasOwn(candidate, "playbackPositions") &&
+            !Object.hasOwn(candidate, "resumePositionSeconds")
+          ) return [{ id, name, videoIds }];
+          // 旧形式の値は復元データに残すが、キューを適用するときには参照しない。
           const resumeVideoId = videoId(candidate.resumeVideoId);
           const positions = playbackPositions(candidate.playbackPositions);
           const legacyPosition = playbackPosition(
@@ -161,7 +168,11 @@ export function restoreState(raw: string | null): SavedState {
               name,
               videoIds,
               resumeVideoId,
-              playbackPositions: selectPlaybackPositions(positions, videoIds),
+              playbackPositions: Object.fromEntries(
+                videoIds.flatMap((video) =>
+                  positions[video] > 0 ? [[video, positions[video]]] : [],
+                ),
+              ),
             },
           ];
         })
@@ -274,43 +285,12 @@ export function appendQueue(queue: string[], videoIds: string[]): string[] {
   return result;
 }
 
-// 保存キューには対象動画のうち、途中位置があるものだけを含める。
-export function selectPlaybackPositions(
-  playbackPositions: Record<string, number>,
-  videoIds: string[],
-): Record<string, number> {
-  return Object.fromEntries(
-    videoIds.flatMap((id) => {
-      const seconds = playbackPositions[id];
-      return Number.isFinite(seconds) && seconds > 0
-        ? [[id, Math.floor(seconds)]]
-        : [];
-    }),
-  );
-}
-
-// 保存キューに再開動画があれば履歴を上書きし、旧保存形式などでなければ現在値を維持する。
-export function mergeSavedQueue(
-  queue: string[],
-  resumeVideoId: string | null,
-  playbackPositions: Record<string, number>,
-  savedQueue: SavedQueue,
-): {
-  queue: string[];
-  resumeVideoId: string | null;
-  playbackPositions: Record<string, number>;
-} {
-  const replaceResume = savedQueue.resumeVideoId !== null;
-  const mergedPositions = { ...playbackPositions };
-  for (const id of savedQueue.videoIds) {
-    const seconds = savedQueue.playbackPositions[id];
-    if (seconds > 0) mergedPositions[id] = seconds;
+// 追加は一覧から選ぶときと同じ扱いにし、置き換えでは開始点だけを先頭へ戻す。
+export function loadSavedQueue(state: SavedState, savedQueue: SavedQueue, replace: boolean): SavedState {
+  if (replace) {
+    return { ...state, queue: [...savedQueue.videoIds], resumeVideoId: null };
   }
-  return {
-    queue: appendQueue(queue, savedQueue.videoIds),
-    resumeVideoId: replaceResume ? savedQueue.resumeVideoId : resumeVideoId,
-    playbackPositions: mergedPositions,
-  };
+  return { ...state, queue: appendQueue(state.queue, savedQueue.videoIds) };
 }
 
 // 最後に再生した動画が現在のキューに含まれる場合だけ、その位置から開始する。
