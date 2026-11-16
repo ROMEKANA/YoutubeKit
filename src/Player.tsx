@@ -7,7 +7,7 @@ import {
   type Ref,
 } from "react";
 import { Icon } from "./Icon";
-import type { Video } from "./model";
+import { formatDuration, type Video } from "./model";
 import { PlaylistTracker } from "./playback";
 import { loadYouTubeApi } from "./youtube";
 
@@ -144,6 +144,12 @@ export function Player({
     };
   }, [active, videoMaximized, diagnosticSizing]);
   const [index, setIndex] = useState(0);
+  const [queueDisplay, setQueueDisplay] = useState<{
+    videoId: string;
+    positions: Record<string, number>;
+  } | null>(null);
+  const displayedVideoId = useRef<string | null>(null);
+  const recordedQueuePositions = useRef<Record<string, number>>({});
   const [status, setStatus] = useState("YouTubeプレーヤーを読み込んでいます…");
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
@@ -187,11 +193,32 @@ export function Player({
   restartNearEndSecondsRef.current = restartNearEndSeconds;
   onPlaybackProgressRef.current = onPlaybackProgress;
 
+  useEffect(() => {
+    if (active) return;
+    displayedVideoId.current = null;
+    recordedQueuePositions.current = {};
+    setQueueDisplay(null);
+  }, [active]);
+
+  // 緑の行と他の動画の再生位置を、実際に再生する動画が変わったときだけ更新する。
+  function updateQueueDisplay(videoId: string) {
+    if (displayedVideoId.current === videoId) return;
+    displayedVideoId.current = videoId;
+    setQueueDisplay({
+      videoId,
+      positions: Object.fromEntries(videosRef.current.map((video) => [
+        video.id,
+        recordedQueuePositions.current[video.id] ?? playbackPositionsRef.current[video.id] ?? 0,
+      ])),
+    });
+  }
+
   function persistPlaybackSample(sample: {
     videoId: string;
     positionSeconds: number;
   }) {
     lastPositionSavedAt.current = Date.now();
+    recordedQueuePositions.current[sample.videoId] = sample.positionSeconds;
     onPlaybackProgressRef.current?.(sample.videoId, sample.positionSeconds);
   }
 
@@ -438,6 +465,7 @@ export function Player({
                 lastPlayingIndex.current = current;
                 setPlaying(true);
                 samplePlaybackProgress(event.target);
+                if (video) updateQueueDisplay(video.id);
                 const pending = pendingSeek.current;
                 pendingSeek.current = null;
                 const requestedSeconds =
@@ -743,32 +771,34 @@ export function Player({
               : "動画を押すと、その動画を最初から再生します。最後の動画で終了します。"}
         </p>
         <ol>
-          {videos.map((video, position) => (
-            <li
-              key={video.id}
-              className={position === index ? "current" : ""}
-            >
-              <button
-                className="session-queue-item"
-                disabled={!ready || !!error}
-                aria-current={position === index ? "true" : undefined}
-                aria-label={`${position + 1}本目 ${video.title}を${resumePlaybackPosition ? "保存位置から" : "最初から"}再生`}
-                onClick={() => playFromQueue(position)}
-              >
-                <span>{String(position + 1).padStart(2, "0")}</span>
-                <div>
-                  {video.title}
-                  <small>
-                    {position === index
-                      ? "現在の動画"
-                      : position === index + 1
-                        ? "次の動画"
-                        : video.channel}
-                  </small>
-                </div>
-              </button>
-            </li>
-          ))}
+          {videos.map((video, position) => {
+            const isCurrent = queueDisplay?.videoId === video.id;
+            const savedPosition = queueDisplay?.positions[video.id] ?? playbackPositions[video.id] ?? 0;
+            return (
+              <li key={video.id} className={isCurrent ? "current" : ""}>
+                <button
+                  className="session-queue-item"
+                  disabled={!ready || !!error}
+                  aria-current={isCurrent ? "true" : undefined}
+                  aria-label={`${position + 1}本目 ${video.title}を${resumePlaybackPosition ? "保存位置から" : "最初から"}再生`}
+                  onClick={() => playFromQueue(position)}
+                >
+                  <span className="session-queue-number">{position + 1}</span>
+                  <span className="queue-thumb-wrap">
+                    <img className="queue-thumb" src={video.thumbnailUrl || `https://i.ytimg.com/vi/${video.id}/mqdefault.jpg`} alt="" loading="lazy" />
+                    <span className="duration">{formatDuration(video.durationSeconds)}</span>
+                  </span>
+                  <span className="session-queue-details">
+                    {video.title}
+                    <small>
+                      {video.channel}
+                      {isCurrent ? complete ? "" : " · 再生中" : ` · 再生位置 ${formatDuration(savedPosition)}`}
+                    </small>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
         </ol>
       </div>
     </section>

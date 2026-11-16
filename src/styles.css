@@ -1331,10 +1331,10 @@ small {
 .session-queue-item {
   width: 100%;
   display: flex;
-  gap: 20px;
-  align-items: flex-start;
+  gap: 10px;
+  align-items: center;
   font-size: 13px;
-  padding: 18px 15px;
+  padding: 12px 8px;
   border: 0;
   border-radius: 10px;
   color: inherit;
@@ -1348,12 +1348,14 @@ small {
 .session-queue-item:disabled {
   cursor: wait;
 }
-.session-queue-item > span {
-  color: #9ca88d;
+.session-queue-number {
+  color: #667457;
   font-size: 11px;
 }
-.session-queue-item > div {
+.session-queue-details {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .session-queue li.current .session-queue-item {
   background: #e7eddf;
