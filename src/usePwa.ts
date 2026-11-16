@@ -7,6 +7,8 @@ export function usePwa() {
   const [updateReady, setUpdateReady] = useState(false);
   const [message, setMessage] = useState("");
   const registration = useRef<ServiceWorkerRegistration | null>(null);
+  const registrationRequest = useRef<Promise<ServiceWorkerRegistration> | null>(null);
+  const updateCheck = useRef<Promise<void> | null>(null);
   const applying = useRef(false);
   const reloadReady = useRef(false);
   const enabled = import.meta.env.PROD && "serviceWorker" in navigator;
@@ -38,9 +40,12 @@ export function usePwa() {
     };
     navigator.serviceWorker.addEventListener("controllerchange", changed);
     let removeUpdateListener = () => {};
-    void navigator.serviceWorker
-      .register("/sw.js", { scope: "/", updateViaCache: "none" })
-      .then((reg) => {
+    const registrationPromise = navigator.serviceWorker.register("/sw.js", {
+      scope: "/",
+      updateViaCache: "none",
+    });
+    registrationRequest.current = registrationPromise;
+    void registrationPromise.then((reg) => {
         if (disposed) return;
         registration.current = reg;
         setInstalled(!!reg.active);
@@ -75,6 +80,7 @@ export function usePwa() {
       });
     return () => {
       disposed = true;
+      registrationRequest.current = null;
       removeUpdateListener();
       window.removeEventListener("online", network);
       window.removeEventListener("offline", network);
@@ -83,15 +89,17 @@ export function usePwa() {
   }, [enabled]);
 
   async function checkUpdate() {
-    if (!registration.current) return;
+    if (!online || !registrationRequest.current) return;
+    if (updateCheck.current) return updateCheck.current;
     setMessage("");
-    try {
-      await registration.current.update();
-    } catch {
-      setMessage(
-        "更新を確認できませんでした。通信を確認して再試行してください。",
-      );
-    }
+    // 起動直後の確認要求も、登録が完了してから1回だけ処理する。
+    updateCheck.current = registrationRequest.current
+      .then(async (reg) => { await reg.update(); })
+      .catch(() => {
+        setMessage("アプリの更新を確認できませんでした。通信を確認して再試行してください。");
+      })
+      .finally(() => { updateCheck.current = null; });
+    return updateCheck.current;
   }
 
   function applyUpdate(playing: boolean) {

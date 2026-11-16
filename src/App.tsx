@@ -9,6 +9,7 @@ import {
 import { flushSync } from "react-dom";
 import { version as appVersion } from "../package.json";
 import {
+  catalogAutoRefreshIntervals,
   createSavedQueueId,
   getQueueStart,
   toggleQueueItem,
@@ -230,6 +231,9 @@ function CatalogApp({
   const dragOrigin = useRef<number | null>(null);
   const dragTarget = useRef<number | null>(null);
   const settings = saved.settings;
+  const [foreground, setForeground] = useState<{ leftAt: number; openedAt: number } | null>(null);
+  const autoRefreshHandled = useRef<typeof foreground>(null);
+  const headerRefresh = useRef(false);
   const cloud = useCloud(stateKey, saved, setSaved, catalog.auth?.authenticated ? catalog.auth.csrfToken : undefined, !!session);
   const knownVideos = useRef(new Map<string, Video>());
   for (const video of catalog.queueVideos)
@@ -277,6 +281,68 @@ function CatalogApp({
   }, [previewQueue, catalog.auth?.authenticated]);
 
   const refresh = () => catalog.refresh();
+
+  function refreshWithAppCheck() {
+    void pwa.checkUpdate();
+    if (headerRefresh.current || catalog.refreshQueued) return;
+    headerRefresh.current = true;
+    void refresh().finally(() => { headerRefresh.current = false; });
+  }
+
+  // 画面を離れた時刻を保存し、起動・復帰の重複イベントをまとめる。
+  useEffect(() => {
+    if (catalog.sourceKey === "locked") return;
+    const activityKey = `${stateKey}.catalog-left-at`;
+    let leftAt = 0;
+    let visible = false;
+    try {
+      leftAt = Number(localStorage.getItem(activityKey)) || 0;
+    } catch {
+      // 保存不可でも、同じページ内の前面復帰は判定できる。
+    }
+    const enter = () => {
+      if (visible || document.hidden) return;
+      visible = true;
+      setForeground({ leftAt, openedAt: Date.now() });
+    };
+    const leave = () => {
+      if (!visible) return;
+      visible = false;
+      leftAt = Date.now();
+      setForeground(null);
+      try {
+        localStorage.setItem(activityKey, String(leftAt));
+      } catch {
+        // 画面を離れた時刻はメモリ上にも保持する。
+      }
+    };
+    const visibilityChanged = () => {
+      if (document.hidden) leave();
+      else enter();
+    };
+    enter();
+    document.addEventListener("visibilitychange", visibilityChanged);
+    window.addEventListener("pagehide", leave);
+    window.addEventListener("pageshow", enter);
+    return () => {
+      document.removeEventListener("visibilitychange", visibilityChanged);
+      window.removeEventListener("pagehide", leave);
+      window.removeEventListener("pageshow", enter);
+    };
+  }, [stateKey, catalog.sourceKey]);
+
+  // 通信や再生が終わるまで、今回の復帰で発生した更新要求を保持する。
+  useEffect(() => {
+    const minutes = settings.catalogAutoRefreshMinutes;
+    if (!minutes || !foreground || autoRefreshHandled.current === foreground ||
+        !pwa.online || loading || session ||
+        (!catalog.isDemo && !catalog.auth?.connected)) return;
+    const lastActivity = Math.max(foreground.leftAt, (catalog.lastSyncedAt ?? 0) * 1000);
+    if (!lastActivity || foreground.openedAt - lastActivity < minutes * 60_000) return;
+    autoRefreshHandled.current = foreground;
+    refreshWithAppCheck();
+  }, [foreground, loading, session, settings.catalogAutoRefreshMinutes, pwa.online,
+    catalog.isDemo, catalog.auth?.connected, catalog.lastSyncedAt, refreshWithAppCheck]);
   useEffect(() => {
     if (catalog.sourceKey === "locked") return;
     try {
@@ -583,26 +649,24 @@ function CatalogApp({
           <div className="header-actions">
             <button
               className={`icon-button ${loading ? "spinning" : ""}`}
-              aria-label="動画一覧を更新"
+              aria-label="動画一覧を更新・アプリの新版を確認"
               title={
                 catalog.refreshQueued
                   ? "現在の処理後に新着更新を行います"
                   : catalog.isDemo
                     ? "サンプル一覧を再読み込み"
-                    : "登録チャンネルと新着動画を更新"
+                    : "登録チャンネルと新着動画を更新・アプリの新版を確認"
               }
               aria-busy={loading}
               onClick={() => {
-                if (
-                  !catalog.auth?.authenticated &&
-                  !catalog.isDemo &&
-                  !catalog.checking
-                )
-                  setPanel("settings");
-                else {
-                  if (loading) setToast("処理後の新着更新を受け付けました");
-                  void refresh();
+                if (!catalog.auth?.authenticated && !catalog.isDemo) {
+                  void pwa.checkUpdate();
+                  if (!catalog.checking) setPanel("settings");
+                  return;
                 }
+                if (loading && !headerRefresh.current && !catalog.refreshQueued)
+                  setToast("処理後の新着更新を受け付けました");
+                refreshWithAppCheck();
               }}
             >
               <Icon name="refresh" />
@@ -653,6 +717,7 @@ function CatalogApp({
             通信できません。動画の取得・再生にはインターネット接続が必要です。保存したキューと設定はこの端末に残っています。
           </p>
         )}
+        {pwa.message && <p className="notice error" role="alert">{pwa.message}</p>}
         {pwa.updateReady && (
           <div className="notice app-update" role="status">
             <p>
@@ -1634,6 +1699,21 @@ function CatalogApp({
           </div>
           <div className="settings-section settings-app">
             <h3>アプリとホーム画面</h3>
+            <label className="setting-row">
+              <span>しばらく閉じた後に自動更新</span>
+              <select
+                value={settings.catalogAutoRefreshMinutes}
+                onChange={(event) => updateSettings({
+                  catalogAutoRefreshMinutes: Number(event.target.value),
+                })}
+              >
+                {catalogAutoRefreshIntervals.map((minutes) => (
+                  <option key={minutes} value={minutes}>
+                    {minutes ? `${minutes}分` : "オフ"}
+                  </option>
+                ))}
+              </select>
+            </label>
             <p><a className="text-button" href="/?lab=layout">表示ずれの比較画面</a></p>
             <p className="panel-note">
               iPhoneはSafariの共有から「ホーム画面に追加」を選びます。

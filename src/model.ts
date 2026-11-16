@@ -12,6 +12,7 @@ export interface Video {
 export interface Settings {
   densityPercent: number;
   initialCount: number;
+  catalogAutoRefreshMinutes: number;
   additionalCount: number;
   excludeShort: boolean;
   shortThreshold: number;
@@ -42,9 +43,11 @@ export interface SavedState {
 
 export const storageKey = "youtubekit.prototype.v1";
 export const playbackSaveIntervals = [0, 1, 2, 3, 5, 10, 36, 60] as const;
+export const catalogAutoRefreshIntervals = [0, 1, 5, 15, 30, 60, 120] as const;
 export const defaultSettings: Settings = {
   densityPercent: 100,
   initialCount: 30,
+  catalogAutoRefreshMinutes: 30,
   additionalCount: 30,
   excludeShort: true,
   shortThreshold: 180,
@@ -178,6 +181,9 @@ export function restoreState(raw: string | null): SavedState {
         watchedMaxPercent,
         densityPercent,
         initialCount: number(settings.initialCount, 30, 100),
+        catalogAutoRefreshMinutes: catalogAutoRefreshIntervals.find(
+          (minutes) => minutes === settings.catalogAutoRefreshMinutes,
+        ) ?? defaultSettings.catalogAutoRefreshMinutes,
         additionalCount: number(settings.additionalCount, 30, 100),
         excludeShort:
           typeof settings.excludeShort === "boolean"
