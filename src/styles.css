@@ -149,11 +149,16 @@ small {
   color: #869081;
   margin-bottom: 10px;
 }
+.queue-save-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 4px;
+}
 .saved-queue-link {
-  display: block;
-  width: fit-content;
+  min-height: 44px;
   padding: 0;
-  margin-bottom: 9px;
+  white-space: nowrap;
   color: #c46f19;
   font-size: 11px;
   font-weight: 600;
@@ -934,11 +939,6 @@ small {
 .queue-heading span {
   padding: 0 8px;
   color: #b3bbaa;
-}
-.queue-heading-actions {
-  display: flex;
-  align-items: center;
-  gap: 14px;
 }
 .saved-queue-list {
   list-style: none;

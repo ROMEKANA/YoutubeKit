@@ -207,6 +207,7 @@ function CatalogApp({
   const [saveQueueReturnPanel, setSaveQueueReturnPanel] = useState<
     "queue" | null
   >(null);
+  const [savedQueuesReturnPanel, setSavedQueuesReturnPanel] = useState<"queue" | null>(null);
   const [previewQueueId, setPreviewQueueId] = useState<string | null>(null);
   const [previewVideos, setPreviewVideos] = useState<Video[]>([]);
   const previewQueue = saved.savedQueues.find((item) => item.id === previewQueueId);
@@ -437,6 +438,11 @@ function CatalogApp({
     setPanel(saveQueueReturnPanel);
   }
 
+  function closeSavedQueuePreview() {
+    setPreviewQueueId(null);
+    setPanel("savedQueues");
+  }
+
   function applySavedQueue(replace: boolean) {
     const selected = previewQueue;
     if (!selected) {
@@ -458,7 +464,7 @@ function CatalogApp({
         merged.resumeVideoId = null;
       return { ...state, ...merged };
     });
-    setPanel(null);
+    setPanel(savedQueuesReturnPanel);
     setToast(replace
       ? `「${selected.name}」に置き換えました`
       : addedCount
@@ -513,6 +519,29 @@ function CatalogApp({
     setChannelId("all");
     setLimit(settings.initialCount);
     window.scrollTo({ top: 0 });
+  }
+
+  function queueSaveActions(returnPanel: "queue" | null) {
+    return (
+      <div className="queue-save-actions">
+        <button
+          className="saved-queue-link"
+          onClick={() => {
+            setSavedQueuesReturnPanel(returnPanel);
+            setPanel("savedQueues");
+          }}
+        >
+          保存したキューを選択
+        </button>
+        <button
+          className="saved-queue-link"
+          disabled={!saved.queue.length}
+          onClick={() => openSaveQueue(saved.queue, returnPanel)}
+        >
+          このキューを保存
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -710,12 +739,7 @@ function CatalogApp({
               <section className="video-section" aria-label="動画一覧">
                 <div className="section-heading">
                   <div>
-                    <button
-                      className="saved-queue-link"
-                      onClick={() => setPanel("savedQueues")}
-                    >
-                      保存したキューを選択
-                    </button>
+                    {queueSaveActions(null)}
                     <p className="eyebrow" hidden>VIDEO LIBRARY</p>
                     <h1>{currentChannel}</h1>
                   </div>
@@ -1075,27 +1099,19 @@ function CatalogApp({
 
       {panel === "queue" && (
         <Modal title="再生キュー" onClose={() => setPanel(null)}>
+          {queueSaveActions("queue")}
           <div className="queue-heading">
             <p>
               {saved.queue.length} 本 <span>·</span> 合計{" "}
               {formatDuration(queueSeconds, true)}
             </p>
-            <div className="queue-heading-actions">
-              <button
-                className="text-button"
-                disabled={!saved.queue.length}
-                onClick={() => openSaveQueue(saved.queue, "queue")}
-              >
-                このキューを保存
-              </button>
-              <button
-                className="text-button danger"
-                disabled={!saved.queue.length}
-                onClick={clearQueue}
-              >
-                全削除
-              </button>
-            </div>
+            <button
+              className="text-button danger"
+              disabled={!saved.queue.length}
+              onClick={clearQueue}
+            >
+              全削除
+            </button>
           </div>
           {!saved.queue.length && (
             <div className="empty-state">
@@ -1232,7 +1248,7 @@ function CatalogApp({
       )}
 
       {panel === "savedQueues" && (
-        <Modal title="保存したキュー" onClose={() => setPanel(null)}>
+        <Modal title="保存したキュー" onClose={() => setPanel(savedQueuesReturnPanel)}>
           {!saved.savedQueues.length && (
             <div className="empty-state">
               <Icon name="list" size={32} />
@@ -1266,7 +1282,7 @@ function CatalogApp({
       )}
 
       {panel === "savedQueuePreview" && (
-        <Modal title={previewQueue?.name ?? "保存したキュー"} onClose={() => setPanel("savedQueues")}>
+        <Modal title={previewQueue?.name ?? "保存したキュー"} onClose={closeSavedQueuePreview}>
           {previewQueue ? (
             <>
               <ol className="saved-queue-preview saved-queue-list" tabIndex={0} aria-label="保存した動画">
@@ -1286,7 +1302,7 @@ function CatalogApp({
               <div className="modal-footer saved-queue-preview-actions">
                 <button className="primary" onClick={() => applySavedQueue(false)}>キューに追加</button>
                 <button className="secondary" onClick={() => applySavedQueue(true)}>今のキューを置き換え</button>
-                <button className="text-button" onClick={() => setPanel("savedQueues")}>キャンセル</button>
+                <button className="text-button" onClick={closeSavedQueuePreview}>キャンセル</button>
               </div>
             </>
           ) : (
