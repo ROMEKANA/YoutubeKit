@@ -14,7 +14,8 @@ import {
   restoreState,
   selectPlaybackPositions,
   toggleQueueItem,
-  isExcludedByDuration,
+  createVideoFilter,
+  getVideoFilters,
   formatPublishedAt,
   readWarningDismissal,
 } from "./model";
@@ -173,6 +174,7 @@ describe("キューと保存データ", () => {
         },
       ],
       hidden: ["aqz-KE-bpKQ"],
+      hiddenAt: {},
       settings: { ...defaultSettings, densityPercent: 150 },
     };
     expect(restoreState(JSON.stringify(data))).toEqual(data);
@@ -324,10 +326,18 @@ describe("キューと保存データ", () => {
   });
   it("標準の3分以下を除外し、オフなら短い動画も表示する", () => {
     expect(defaultSettings.shortThreshold / 60).toBe(3);
-    expect(isExcludedByDuration(180, defaultSettings)).toBe(true);
-    expect(isExcludedByDuration(181, defaultSettings)).toBe(false);
-    expect(
-      isExcludedByDuration(19, { ...defaultSettings, excludeShort: false }),
-    ).toBe(false);
+    const video = { id: "aqz-KE-bpKQ", title: "", channelId: "", channel: "", publishedAt: "" };
+    const defaultFilter = createVideoFilter(getVideoFilters(defaultSettings, []));
+    expect(defaultFilter({ ...video, durationSeconds: 180 })).toBe(false);
+    expect(defaultFilter({ ...video, durationSeconds: 181 })).toBe(true);
+    const noDurationFilter = createVideoFilter(getVideoFilters({ ...defaultSettings, excludeShort: false }, []));
+    expect(noDurationFilter({ ...video, durationSeconds: 19 })).toBe(true);
+    const bounds = { ...defaultSettings, shortThreshold: 59, durationMaxSeconds: 120, watchedMinPercent: 50 };
+    const range = createVideoFilter(getVideoFilters(bounds, []), { [video.id]: 60 });
+    expect([59, 60, 120, 121].map((durationSeconds) => range({ ...video, durationSeconds }))).toEqual([false, true, true, false]);
+    const hidden = createVideoFilter(getVideoFilters({ ...bounds, excludeByWatchedRange: false }, [video.id]));
+    expect(hidden({ ...video, durationSeconds: 120 })).toBe(false);
+    const showHidden = createVideoFilter(getVideoFilters({ ...bounds, excludeByWatchedRange: false, excludeHiddenVideos: false }, [video.id]));
+    expect(showHidden({ ...video, durationSeconds: 120 })).toBe(true);
   });
 });

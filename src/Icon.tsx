@@ -4,6 +4,8 @@ type Name =
   | "theater"
   | "expand"
   | "shrink"
+  | "clock"
+  | "percent"
   | "eye"
   | "eye-off"
   | "settings"
@@ -26,6 +28,8 @@ const paths: Record<Name, string> = {
   theater: "M4 4h16v12H4V4ZM8 20h8M12 16v4M8 8h8M8 12h5",
   expand: "M8 3H3v5M3 3l6 6M16 3h5v5M21 3l-6 6M3 16v5h5M3 21l6-6M21 16v5h-5M21 21l-6-6",
   shrink: "M3 8h5V3M8 8 2 2M21 8h-5V3M16 8l6-6M8 21v-5H3M8 16l-6 6M16 21v-5h5M16 16l6 6",
+  clock: "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0ZM12 6v6l4 2",
+  percent: "M5 19 19 5M9 7a2 2 0 1 1-4 0 2 2 0 0 1 4 0Zm10 10a2 2 0 1 1-4 0 2 2 0 0 1 4 0Z",
   eye: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Zm13 0a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
   "eye-off":
     "M3 3l18 18M9.9 5.2A12 12 0 0 1 12 5c6 0 10 7 10 7a18 18 0 0 1-3 3.8M6.3 6.3A22 22 0 0 0 2 12s4 7 10 7a12 12 0 0 0 5.7-1.7M9.9 9.9a3 3 0 0 0 4.2 4.2",

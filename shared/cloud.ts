@@ -111,6 +111,7 @@ export function applyCloud(
     ...state,
     settings: { ...state.settings },
     hidden: [...state.hidden],
+    hiddenAt: { ...state.hiddenAt },
     playbackPositions: { ...state.playbackPositions },
   };
   const queues = new Map(state.savedQueues.map((queue) => [queue.id, queue]));
@@ -122,8 +123,13 @@ export function applyCloud(
       if (value === null) queues.delete(id);
       else queues.set(id, value as SavedQueue);
     } else if (kind === "hidden") {
-      next.hidden = next.hidden.filter((item) => item !== id);
-      if (value) next.hidden.push(id);
+      if (value) {
+        if (!next.hidden.includes(id)) next.hidden.push(id);
+        if (!next.hiddenAt[id] && entry.updatedAt > 0) next.hiddenAt[id] = entry.updatedAt;
+      } else {
+        next.hidden = next.hidden.filter((item) => item !== id);
+        delete next.hiddenAt[id];
+      }
     } else if (kind === "position" && !playing)
       next.playbackPositions[id] = value;
     else if (kind === "setting") Object.assign(next.settings, { [id]: value });

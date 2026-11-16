@@ -13,8 +13,10 @@ import {
   createSavedQueueId,
   getQueueStart,
   toggleQueueItem,
-  isExcludedByDuration,
-  isWithinWatchedRange,
+  createVideoFilter,
+  durationOptions,
+  getVideoFilters,
+  watchedPercentOptions,
   formatDuration,
   formatPublishedAt,
   readWarningDismissal,
@@ -37,9 +39,10 @@ import { useCloud } from "./useCloud";
 import { cloudIntervals } from "../shared/cloud";
 
 type Panel =
-  "channels" | "queue" | "savedQueues" | "savedQueuePreview" | "saveQueue" | "settings" | null;
+  "channels" | "queue" | "savedQueues" | "savedQueuePreview" | "saveQueue" | "settings" | "hiddenVideos" | null;
 const thumbnail = (id: string) => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
 const dateLabel = formatPublishedAt;
+const durationLabel = (seconds: number) => seconds < 3600 ? `${seconds / 60}分` : `${seconds / 3600}時間`;
 
 // native dialogでフォーカス移動とEscapeによる閉じる操作を提供する。
 function Modal({
@@ -217,7 +220,9 @@ function CatalogApp({
   const [saveQueueDefaultName, setSaveQueueDefaultName] = useState("");
   const [menuVideo, setMenuVideo] = useState<Video | null>(null);
   const [channelId, setChannelId] = useState("all");
-  const [showHidden, setShowHidden] = useState(false);
+  const [hiddenPage, setHiddenPage] = useState(0);
+  const [hiddenDetails, setHiddenDetails] = useState<Video[]>([]);
+  const [hiddenVideoToRestore, setHiddenVideoToRestore] = useState<string | null>(null);
   const [limit, setLimit] = useState(saved.settings.initialCount);
   const [toast, setToast] = useState("");
   const [session, setSession] = useState<Video[] | null>(null);
@@ -239,10 +244,11 @@ function CatalogApp({
   for (const video of catalog.queueVideos)
     knownVideos.current.set(video.id, video);
   for (const video of previewVideos) knownVideos.current.set(video.id, video);
+  for (const video of hiddenDetails) knownVideos.current.set(video.id, video);
   for (const video of videos) knownVideos.current.set(video.id, video);
   const queueVideos = useMemo(
     () => saved.queue.map((id) => knownVideos.current.get(id)),
-    [saved.queue, catalog.queueVideos, previewVideos, videos],
+    [saved.queue, catalog.queueVideos, previewVideos, hiddenDetails, videos],
   );
   const playableQueue = useMemo(
     () => queueVideos.filter((video): video is Video => !!video),
@@ -255,13 +261,23 @@ function CatalogApp({
   const canPlay =
     saved.queue.length > 0 && playableQueue.length === saved.queue.length;
   const channels = catalog.channels;
-  const visible = videos.filter(
-    (video) =>
-      (channelId === "all" || video.channelId === channelId) &&
-      (showHidden || !saved.hidden.includes(video.id)) &&
-      !isExcludedByDuration(video.durationSeconds, settings) &&
-      isWithinWatchedRange(video, saved.playbackPositions[video.id], settings.watchedMinPercent, settings.watchedMaxPercent),
-  );
+  const filters = useMemo(() => getVideoFilters(settings, saved.hidden), [settings, saved.hidden]);
+  const filterPositions = filters.watchedMinPercent > 0 || filters.watchedMaxPercent < 100
+    ? saved.playbackPositions
+    : undefined;
+  const visible = videos.filter(createVideoFilter(filters, filterPositions))
+    .filter((video) => channelId === "all" || video.channelId === channelId);
+  const sortedHidden = useMemo(() => [...saved.hidden].reverse().sort(
+    (a, b) => (saved.hiddenAt[b] ?? 0) - (saved.hiddenAt[a] ?? 0),
+  ), [saved.hidden, saved.hiddenAt]);
+  const hiddenPageCount = 1 + Math.ceil(Math.max(0, sortedHidden.length - settings.initialCount) / settings.additionalCount);
+  const currentHiddenPage = Math.min(hiddenPage, hiddenPageCount - 1);
+  const hiddenPageIds = useMemo(() => {
+    if (currentHiddenPage === 0) return sortedHidden.slice(0, settings.initialCount);
+    const offset = settings.initialCount + (currentHiddenPage - 1) * settings.additionalCount;
+    return sortedHidden.slice(offset, offset + settings.additionalCount);
+  }, [currentHiddenPage, sortedHidden, settings.initialCount, settings.additionalCount]);
+  const durationMin = settings.shortThreshold < 0 ? -1 : settings.shortThreshold + 1;
   const currentChannel =
     channels.find((channel) => channel.id === channelId)?.title ??
     "すべてのチャンネル";
@@ -279,6 +295,20 @@ function CatalogApp({
     });
     return () => controller.abort();
   }, [previewQueue, catalog.auth?.authenticated]);
+
+  // 非表示リストは表示するページの詳細だけを取得する。
+  useEffect(() => {
+    if (panel !== "hiddenVideos" || !catalog.auth?.authenticated) return;
+    const missingIds = hiddenPageIds.filter((id) => !knownVideos.current.has(id));
+    if (!missingIds.length) return;
+    const controller = new AbortController();
+    void readSavedVideos(missingIds, controller.signal).then((details) => {
+      if (!controller.signal.aborted) setHiddenDetails(details);
+    }).catch(() => {
+      // メタデータが無い場合もIDで非表示を解除できる。
+    });
+    return () => controller.abort();
+  }, [panel, hiddenPageIds, catalog.auth?.authenticated]);
 
   const refresh = () => catalog.refresh();
 
@@ -361,28 +391,20 @@ function CatalogApp({
   }, [toast]);
   useEffect(() => {
     setLimit(settings.initialCount);
-  }, [channelId, showHidden, settings]);
+  }, [channelId, settings]);
   useEffect(() => {
     if (catalog.sourceKey === "locked" || session) return;
     catalog.selectView({
       channelId,
       count: limit,
-      minDuration: settings.excludeShort ? settings.shortThreshold : -1,
-      hidden: showHidden ? [] : saved.hidden,
-      playbackPositions: saved.playbackPositions,
-      watchedMinPercent: settings.watchedMinPercent,
-      watchedMaxPercent: settings.watchedMaxPercent,
+      ...filters,
+      playbackPositions: filterPositions,
     });
   }, [
     channelId,
     limit,
-    showHidden,
-    settings.excludeShort,
-    settings.shortThreshold,
-    saved.hidden,
-    saved.playbackPositions,
-    settings.watchedMinPercent,
-    settings.watchedMaxPercent,
+    filters,
+    filterPositions,
     session,
     catalog.sourceKey,
   ]);
@@ -444,16 +466,23 @@ function CatalogApp({
     setToast("再生キューをすべて削除しました");
   }
 
-  function toggleHidden(video: Video) {
-    const wasHidden = saved.hidden.includes(video.id);
-    setSaved((state) => ({
-      ...state,
-      hidden: wasHidden
-        ? state.hidden.filter((id) => id !== video.id)
-        : [...state.hidden, video.id],
-    }));
+  function setVideoHidden(id: string, hidden: boolean) {
+    const changedAt = Date.now();
+    setSaved((state) => {
+      if (state.hidden.includes(id) === hidden) return state;
+      const hiddenAt = { ...state.hiddenAt };
+      if (hidden) hiddenAt[id] = changedAt;
+      else delete hiddenAt[id];
+      return {
+        ...state,
+        hidden: hidden ? [...state.hidden, id] : state.hidden.filter((item) => item !== id),
+        hiddenAt,
+      };
+    });
     setMenuVideo(null);
-    setToast(wasHidden ? "動画を再表示しました" : "動画を非表示にしました");
+    setHiddenVideoToRestore(null);
+    setHiddenPage(currentHiddenPage);
+    setToast(hidden ? "動画を非表示にしました" : "動画を再表示しました");
   }
 
   function updateSettings(value: Partial<Settings>) {
@@ -672,14 +701,35 @@ function CatalogApp({
               <Icon name="refresh" />
             </button>
             {!session && (
-              <button
-                className={`icon-button ${showHidden ? "active" : ""}`}
-                aria-label="非表示動画も表示"
-                aria-pressed={showHidden}
-                onClick={() => setShowHidden(!showHidden)}
-              >
-                <Icon name={showHidden ? "eye" : "eye-off"} />
-              </button>
+              <>
+                <button
+                  className={`icon-button ${settings.excludeShort ? "active" : ""}`}
+                  aria-label="動画時間で絞り込む"
+                  title="動画時間で絞り込む"
+                  aria-pressed={settings.excludeShort}
+                  onClick={() => updateSettings({ excludeShort: !settings.excludeShort })}
+                >
+                  <Icon name="clock" />
+                </button>
+                <button
+                  className={`icon-button ${settings.excludeByWatchedRange ? "active" : ""}`}
+                  aria-label="再生位置で絞り込む"
+                  title="再生位置で絞り込む"
+                  aria-pressed={settings.excludeByWatchedRange}
+                  onClick={() => updateSettings({ excludeByWatchedRange: !settings.excludeByWatchedRange })}
+                >
+                  <Icon name="percent" />
+                </button>
+                <button
+                  className={`icon-button ${!settings.excludeHiddenVideos ? "active" : ""}`}
+                  aria-label="非表示動画も表示"
+                  title="非表示動画も表示"
+                  aria-pressed={!settings.excludeHiddenVideos}
+                  onClick={() => updateSettings({ excludeHiddenVideos: !settings.excludeHiddenVideos })}
+                >
+                  <Icon name={settings.excludeHiddenVideos ? "eye-off" : "eye"} />
+                </button>
+              </>
             )}
             <button
               className="icon-button"
@@ -811,7 +861,7 @@ function CatalogApp({
                 </div>
                 <div className="list-meta">
                   <span>
-                    {showHidden ? "非表示の動画も表示中" : "公開日の新しい順"}
+                    {settings.excludeHiddenVideos ? "公開日の新しい順" : "非表示の動画も表示中"}
                   </span>
                   <span>
                     {loading
@@ -956,7 +1006,7 @@ function CatalogApp({
                     <Icon name="list" size={32} />
                     <h3>表示する動画がありません</h3>
                     <p>
-                      チャンネルや非表示・短い動画の設定を変更してみてください。
+                      チャンネルや動画の絞り込み設定を変更してみてください。
                     </p>
                   </div>
                 )}
@@ -1376,6 +1426,43 @@ function CatalogApp({
         </Modal>
       )}
 
+      {panel === "hiddenVideos" && (
+        <Modal title="非表示にした動画" onClose={() => setPanel("settings")}>
+          {hiddenPageIds.length === 0 && <p className="panel-note">非表示にした動画はありません。</p>}
+          <ul className="saved-queue-preview saved-queue-list" aria-label="非表示にした動画">
+            {hiddenPageIds.map((id) => {
+              const video = knownVideos.current.get(id);
+              return (
+                <li key={id}>
+                  <button className="queue-item-details" onClick={() => setHiddenVideoToRestore(id)}>
+                    <img className="queue-thumb" src={video?.thumbnailUrl || thumbnail(id)} alt="" loading="lazy" />
+                    <span className="queue-item-info">
+                      <strong>{video?.title ?? id}</strong>
+                      {video && <small>{video.channel}</small>}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {hiddenPageCount > 1 && (
+            <div className="hidden-page-controls">
+              <button className="secondary" disabled={currentHiddenPage === 0} onClick={() => setHiddenPage(currentHiddenPage - 1)}>前へ</button>
+              <span>{currentHiddenPage + 1} / {hiddenPageCount}</span>
+              <button className="secondary" disabled={currentHiddenPage + 1 >= hiddenPageCount} onClick={() => setHiddenPage(currentHiddenPage + 1)}>次へ</button>
+            </div>
+          )}
+        </Modal>
+      )}
+      {panel === "hiddenVideos" && hiddenVideoToRestore && (
+        <Modal title={knownVideos.current.get(hiddenVideoToRestore)?.title ?? hiddenVideoToRestore} onClose={() => setHiddenVideoToRestore(null)}>
+          <div className="action-menu">
+            <button onClick={() => setVideoHidden(hiddenVideoToRestore, false)}>非表示を解除する</button>
+            <button onClick={() => setHiddenVideoToRestore(null)}>閉じる</button>
+          </div>
+        </Modal>
+      )}
+
       {panel === "saveQueue" && (
         <Modal title="このキューを保存" onClose={closeSaveQueue}>
           <form
@@ -1485,60 +1572,85 @@ function CatalogApp({
             </label>
           </div>
           <div className="settings-section">
-            <h3>短い動画の除外</h3>
+            <h3>動画時間での絞り込み</h3>
             <label className="setting-row">
-              <span>時間で除外する</span>
-              <input
-                type="checkbox"
-                checked={settings.excludeShort}
-                onChange={(event) =>
-                  updateSettings({ excludeShort: event.target.checked })
-                }
-              />
+              <span>動画時間で除外する</span>
+              <input type="checkbox" checked={settings.excludeShort}
+                onChange={(event) => updateSettings({ excludeShort: event.target.checked })} />
             </label>
             <label className="setting-row">
-              <span>除外する分数（以下）</span>
-              <input
-                type="number"
-                min={1 / 60}
-                max="60"
-                step="any"
-                disabled={!settings.excludeShort}
-                value={settings.shortThreshold / 60}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  if (Number.isFinite(value) && value >= 1 / 60 && value <= 60)
-                    updateSettings({
-                      shortThreshold: Math.round(value * 60),
-                    });
-                }}
-              />
+              <span>表示する動画時間の下限</span>
+              <select value={durationMin} disabled={!settings.excludeShort} onChange={(event) => {
+                const seconds = Number(event.target.value);
+                updateSettings({
+                  shortThreshold: seconds < 0 ? -1 : seconds - 1,
+                  durationMaxSeconds: settings.durationMaxSeconds < 0 ? -1 : Math.max(seconds, settings.durationMaxSeconds),
+                });
+              }}>
+                <option value={-1}>なし</option>
+                {durationMin >= 0 && !durationOptions.includes(durationMin) && (
+                  <option value={durationMin}>{formatDuration(settings.shortThreshold)}を超える（従来の設定）</option>
+                )}
+                {durationOptions.map((seconds) => <option key={seconds} value={seconds}>{durationLabel(seconds)}</option>)}
+              </select>
             </label>
-            <p className="panel-note" hidden>
-              初期値は3分です。Shortsだけの正確な判別はできないため、通常の短い動画も除外されます。
-            </p>
+            <label className="setting-row">
+              <span>表示する動画時間の上限</span>
+              <select value={settings.durationMaxSeconds} disabled={!settings.excludeShort} onChange={(event) => {
+                const seconds = Number(event.target.value);
+                updateSettings({
+                  durationMaxSeconds: seconds,
+                  shortThreshold: seconds < 0 ? settings.shortThreshold : Math.min(settings.shortThreshold, seconds - 1),
+                });
+              }}>
+                <option value={-1}>なし</option>
+                {durationOptions.map((seconds) => <option key={seconds} value={seconds}>{durationLabel(seconds)}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="settings-section">
+            <h3>再生位置での絞り込み</h3>
+            <label className="setting-row">
+              <span>再生位置で除外する</span>
+              <input type="checkbox" checked={settings.excludeByWatchedRange}
+                onChange={(event) => updateSettings({ excludeByWatchedRange: event.target.checked })} />
+            </label>
+            <label className="setting-row">
+              <span>表示する視聴割合の下限</span>
+              <select value={settings.watchedMinPercent} disabled={!settings.excludeByWatchedRange} onChange={(event) => {
+                const value = Number(event.target.value);
+                updateSettings({ watchedMinPercent: value, watchedMaxPercent: Math.max(value, settings.watchedMaxPercent) });
+              }}>
+                {!watchedPercentOptions.includes(settings.watchedMinPercent) && <option value={settings.watchedMinPercent}>{settings.watchedMinPercent}%（従来の設定）</option>}
+                {watchedPercentOptions.map((percent) => <option key={percent} value={percent}>{percent}%</option>)}
+              </select>
+            </label>
+            <label className="setting-row">
+              <span>表示する視聴割合の上限</span>
+              <select value={settings.watchedMaxPercent} disabled={!settings.excludeByWatchedRange} onChange={(event) => {
+                const value = Number(event.target.value);
+                updateSettings({ watchedMaxPercent: value, watchedMinPercent: Math.min(value, settings.watchedMinPercent) });
+              }}>
+                {!watchedPercentOptions.includes(settings.watchedMaxPercent) && <option value={settings.watchedMaxPercent}>{settings.watchedMaxPercent}%（従来の設定）</option>}
+                {watchedPercentOptions.map((percent) => <option key={percent} value={percent}>{percent}%</option>)}
+              </select>
+            </label>
+            <p className="panel-note">未視聴は0%として扱います。</p>
+          </div>
+          <div className="settings-section">
+            <h3>非表示にした動画</h3>
+            <label className="setting-row">
+              <span>非表示の動画を除外する</span>
+              <input type="checkbox" checked={settings.excludeHiddenVideos}
+                onChange={(event) => updateSettings({ excludeHiddenVideos: event.target.checked })} />
+            </label>
+            <button className="secondary" onClick={() => {
+              setHiddenPage(0);
+              setPanel("hiddenVideos");
+            }}>非表示リストを見る</button>
           </div>
           <div className="settings-section">
             <h3>再生位置</h3>
-            <label className="theater-brightness">
-              表示する視聴割合の下限 <output>{settings.watchedMinPercent}%</output>
-              <input type="range" min="0" max="100" step="1"
-                value={settings.watchedMinPercent}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  updateSettings({ watchedMinPercent: value, watchedMaxPercent: Math.max(value, settings.watchedMaxPercent) });
-                }} />
-            </label>
-            <label className="theater-brightness">
-              表示する視聴割合の上限 <output>{settings.watchedMaxPercent}%</output>
-              <input type="range" min="0" max="100" step="1"
-                value={settings.watchedMaxPercent}
-                onChange={(event) => {
-                  const value = Number(event.target.value);
-                  updateSettings({ watchedMaxPercent: value, watchedMinPercent: Math.min(value, settings.watchedMinPercent) });
-                }} />
-            </label>
-            <p className="panel-note">未視聴は0%として扱います。手動の非表示設定とは独立しています。</p>
             <label className="setting-row">
               <span>途中から再生する</span>
               <input
@@ -1816,7 +1928,7 @@ function CatalogApp({
                 {saved.queue.includes(menuVideo.id) ? "キューから削除" : "キューに追加"}
               </button>
             )}
-            <button onClick={() => toggleHidden(menuVideo)}>
+            <button onClick={() => setVideoHidden(menuVideo.id, !saved.hidden.includes(menuVideo.id))}>
               <Icon name="eye" />
               {saved.hidden.includes(menuVideo.id)
                 ? "この動画を再表示"

@@ -700,9 +700,12 @@ export async function getCatalog(c: WorkerContext): Promise<Response> {
     "チャンネルの指定が正しくありません。",
   );
   const limit = boundedInteger(c.req.query("limit") ?? "30", 30, 5000);
-  const seconds = Number(c.req.query("minDuration") ?? "-1");
+  const minDuration = Number(c.req.query("minDuration") ?? "-1");
+  const maxDuration = Number(c.req.query("maxDuration") ?? "-1");
   requireCondition(
-    Number.isInteger(seconds) && seconds >= -1 && seconds <= 3600,
+    Number.isInteger(minDuration) && minDuration >= -1 && minDuration <= 18000 &&
+      Number.isInteger(maxDuration) && maxDuration >= -1 && maxDuration <= 18000 &&
+      (maxDuration < 0 || minDuration < maxDuration),
     "INVALID_DURATION",
     "除外時間の指定が正しくありません。",
   );
@@ -723,9 +726,10 @@ export async function getCatalog(c: WorkerContext): Promise<Response> {
     FROM videos v JOIN channels c ON c.sub = v.sub AND c.channel_id = v.channel_id
     WHERE v.sub = ? AND c.subscribed = 1 AND v.last_fetched_at >= ? AND c.last_synced_at >= ? AND v.availability = 'public' AND v.embeddable = 1
     AND (? = 'all' OR v.channel_id = ?) AND v.duration_seconds > ?
+    AND (? < 0 OR v.duration_seconds <= ?)
     ORDER BY v.published_at DESC, v.video_id LIMIT ?`,
   )
-    .bind(session.sub, cutoff, cutoff, channelId, channelId, seconds, limit + 1)
+    .bind(session.sub, cutoff, cutoff, channelId, channelId, minDuration, maxDuration, maxDuration, limit + 1)
     .all();
   const account = await c.env.DB.prepare(
     "SELECT last_synced_at, video_watermark, warning_revision FROM accounts WHERE sub = ?",

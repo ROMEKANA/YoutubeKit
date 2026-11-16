@@ -16,6 +16,9 @@ export interface Settings {
   additionalCount: number;
   excludeShort: boolean;
   shortThreshold: number;
+  durationMaxSeconds: number;
+  excludeByWatchedRange: boolean;
+  excludeHiddenVideos: boolean;
   theaterBrightness: number;
   playbackSaveIntervalSeconds: number;
   resumePlaybackPosition: boolean;
@@ -38,12 +41,15 @@ export interface SavedState {
   playbackPositions: Record<string, number>;
   savedQueues: SavedQueue[];
   hidden: string[];
+  hiddenAt: Record<string, number>;
   settings: Settings;
 }
 
 export const storageKey = "youtubekit.prototype.v1";
 export const playbackSaveIntervals = [0, 1, 2, 3, 5, 10, 36, 60] as const;
 export const catalogAutoRefreshIntervals = [0, 1, 5, 15, 30, 60, 120] as const;
+export const durationOptions = [1, 2, 3, 5, 10, 30, 60, 120, 180, 300].map((minutes) => minutes * 60);
+export const watchedPercentOptions = Array.from({ length: 21 }, (_, index) => index * 5);
 export const defaultSettings: Settings = {
   densityPercent: 100,
   initialCount: 30,
@@ -51,6 +57,9 @@ export const defaultSettings: Settings = {
   additionalCount: 30,
   excludeShort: true,
   shortThreshold: 180,
+  durationMaxSeconds: -1,
+  excludeByWatchedRange: true,
+  excludeHiddenVideos: true,
   theaterBrightness: 20,
   playbackSaveIntervalSeconds: 5,
   resumePlaybackPosition: true,
@@ -67,6 +76,7 @@ export function restoreState(raw: string | null): SavedState {
     playbackPositions: {},
     savedQueues: [],
     hidden: [],
+    hiddenAt: {},
     settings: { ...defaultSettings },
   };
   if (!raw) return empty;
@@ -170,12 +180,17 @@ export function restoreState(raw: string | null): SavedState {
     const legacyPosition = playbackPosition(value.resumePositionSeconds);
     if (resumeVideoId && legacyPosition > 0 && !positions[resumeVideoId])
       positions[resumeVideoId] = legacyPosition;
+    const hidden = ids(value.hidden);
     return {
       queue: ids(value.queue),
       resumeVideoId,
       playbackPositions: positions,
       savedQueues,
-      hidden: ids(value.hidden),
+      hidden,
+      hiddenAt: Object.fromEntries(hidden.flatMap((id) => {
+        const time = value.hiddenAt?.[id];
+        return Number.isSafeInteger(time) && time > 0 ? [[id, time]] : [];
+      })),
       settings: {
         watchedMinPercent,
         watchedMaxPercent,
@@ -189,7 +204,11 @@ export function restoreState(raw: string | null): SavedState {
           typeof settings.excludeShort === "boolean"
             ? settings.excludeShort
             : true,
-        shortThreshold: number(settings.shortThreshold, 180, 3600),
+        // 旧設定の「指定秒以下を除外」は保存値と境界を維持する。
+        shortThreshold: settings.shortThreshold === -1 ? -1 : number(settings.shortThreshold, 180, 17999),
+        durationMaxSeconds: durationOptions.includes(settings.durationMaxSeconds) ? settings.durationMaxSeconds : -1,
+        excludeByWatchedRange: settings.excludeByWatchedRange !== false,
+        excludeHiddenVideos: settings.excludeHiddenVideos !== false,
         theaterBrightness: number(settings.theaterBrightness, 20, 100),
         playbackSaveIntervalSeconds:
           typeof settings.playbackSaveIntervalSeconds === "number" &&
@@ -303,12 +322,37 @@ export function toggleQueueItem(queue: string[], id: string): string[] {
     : addToQueue(queue, id);
 }
 
-// 設定画面は分単位、動画データと保存済みの閾値は秒単位で比較する。
-export function isExcludedByDuration(
-  durationSeconds: number,
-  settings: Settings,
-): boolean {
-  return settings.excludeShort && durationSeconds <= settings.shortThreshold;
+export interface VideoFilters {
+  minDuration: number;
+  maxDuration: number;
+  hidden: string[];
+  watchedMinPercent: number;
+  watchedMaxPercent: number;
+}
+
+// 一覧・チャンネル順位では同じ有効条件を使う。無効時も設定値は保存する。
+export function getVideoFilters(settings: Settings, hidden: string[]): VideoFilters {
+  return {
+    minDuration: settings.excludeShort ? settings.shortThreshold : -1,
+    maxDuration: settings.excludeShort && settings.durationMaxSeconds >= 0
+      ? Math.max(settings.durationMaxSeconds, settings.shortThreshold + 1)
+      : -1,
+    hidden: settings.excludeHiddenVideos ? hidden : [],
+    watchedMinPercent: settings.excludeByWatchedRange ? settings.watchedMinPercent : 0,
+    watchedMaxPercent: settings.excludeByWatchedRange ? settings.watchedMaxPercent : 100,
+  };
+}
+
+export function createVideoFilter(
+  filters: VideoFilters,
+  positions: Record<string, number> = {},
+): (video: Video) => boolean {
+  const hidden = new Set(filters.hidden);
+  return (video) =>
+    !hidden.has(video.id) &&
+    video.durationSeconds > filters.minDuration &&
+    (filters.maxDuration < 0 || video.durationSeconds <= filters.maxDuration) &&
+    isWithinWatchedRange(video, positions[video.id], filters.watchedMinPercent, filters.watchedMaxPercent);
 }
 
 // 未視聴・長さ不明は0%とし、保存位置が動画時間を超えた場合も100%までに収める。

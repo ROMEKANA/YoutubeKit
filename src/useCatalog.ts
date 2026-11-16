@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { isWithinWatchedRange, parseVideos, restoreState, type Video } from "./model";
+import { createVideoFilter, parseVideos, restoreState, type Video, type VideoFilters } from "./model";
 import { parseSyncIssues, type SyncIssue } from "../shared/sync";
 
 export interface Channel {
@@ -26,14 +26,10 @@ interface Catalog {
   hasMore: boolean;
   cacheHasMore: boolean;
 }
-export interface CatalogView {
+export interface CatalogView extends VideoFilters {
   channelId: string;
   count: number;
-  minDuration: number;
-  hidden: string[];
   playbackPositions?: Record<string, number>;
-  watchedMinPercent?: number;
-  watchedMaxPercent?: number;
 }
 interface Progress {
   jobId: string;
@@ -219,7 +215,10 @@ export function useCatalog() {
     channelId: "all",
     count: 30,
     minDuration: -1,
+    maxDuration: -1,
     hidden: [],
+    watchedMinPercent: 0,
+    watchedMaxPercent: 100,
   });
   const isDemo =
     !!auth && !auth.authenticated && auth.allowDemo && !auth.configured;
@@ -241,6 +240,7 @@ export function useCatalog() {
         5000,
         selectedView.count + selectedView.hidden.length,
       );
+      const matches = createVideoFilter(selectedView, selectedView.playbackPositions);
       let next: Catalog;
       let historyPages = 0;
       while (true) {
@@ -248,13 +248,10 @@ export function useCatalog() {
           channelId: selectedView.channelId,
           limit: String(rawLimit),
           minDuration: String(selectedView.minDuration),
+          maxDuration: String(selectedView.maxDuration),
         });
         next = parseCatalog(await request(`/api/catalog?${query}`, {}, signal));
-        const visibleCount = next.videos.filter(
-          (video) => !selectedView.hidden.includes(video.id) &&
-            isWithinWatchedRange(video, selectedView.playbackPositions?.[video.id],
-              selectedView.watchedMinPercent, selectedView.watchedMaxPercent),
-        ).length;
+        const visibleCount = next.videos.filter(matches).length;
         if (visibleCount >= selectedView.count || view.current !== selectedView)
           break;
         if (next.cacheHasMore && rawLimit < 5000) {

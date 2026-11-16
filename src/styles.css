@@ -960,6 +960,13 @@ small {
   gap: 10px;
   padding-block: 7px;
 }
+.hidden-page-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+}
 .saved-queue-preview-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1535,7 +1542,7 @@ small {
 @media (max-width: 360px) {
   .brand img { display: none; }
   .header-actions .icon-button {
-    width: 34px;
+    width: 32px;
   }
   .header-inner {
     padding: 0 8px;
@@ -1545,7 +1552,7 @@ small {
     padding-right: 13px;
   }
   .brand {
-    font-size: 19px;
+    font-size: 17px;
   }
   .video-list {
     --base-gap: 8px;
