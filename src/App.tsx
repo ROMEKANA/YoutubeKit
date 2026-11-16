@@ -473,7 +473,7 @@ function CatalogApp({
 
   return (
     <div
-      className={`app-shell ${theater ? "theater-mode" : ""} ${session && settings.playerVideoMaximized ? "video-maximized" : ""}`}
+      className={`app-shell ${theater ? "theater-mode" : ""}`}
       style={
         {
           "--theater-brightness": `${settings.theaterBrightness}%`,
@@ -590,8 +590,6 @@ function CatalogApp({
             saveIntervalSeconds={settings.playbackSaveIntervalSeconds}
             resumePlaybackPosition={settings.resumePlaybackPosition}
             restartNearEndSeconds={settings.restartNearEndSeconds}
-            videoMaximized={settings.playerVideoMaximized}
-            onToggleVideoMaximized={() => updateSettings({ playerVideoMaximized: !settings.playerVideoMaximized })}
             theaterButton={theaterButton}
             onTheaterPointerDown={() => { suppressTheaterClick.current = false; }}
             onEnterTheater={() => {

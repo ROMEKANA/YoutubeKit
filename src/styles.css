@@ -1093,7 +1093,7 @@ small {
   padding-top: 25px;
   padding-bottom: 60px;
 }
-.video-maximized .header { position: static; }
+.layout-lab.video-maximized .header { position: static; }
 .player-viewport {
   position: fixed;
   width: 0;
@@ -1119,7 +1119,7 @@ small {
   padding-right: max(19px, env(safe-area-inset-right, 0px));
 }
 /* ノッチ側だけの余白で動画の中心がずれないよう、最大化時は左右を揃える。 */
-.app-shell.video-maximized .playing-main {
+.layout-lab.video-maximized .playing-main {
   padding-inline: max(19px, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
 }
 @media (max-height: 500px) {
