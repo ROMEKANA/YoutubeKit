@@ -1112,7 +1112,6 @@ small {
 }
 .player-toolbar > .text-button { margin-right: auto; }
 .player-toolbar > .tag { white-space: nowrap; }
-.player-view-actions { display: flex; gap: 4px; }
 .player-toolbar > .text-button { min-width: 0; }
 .app-shell .playing-main {
   padding-left: max(19px, env(safe-area-inset-left, 0px));
@@ -1123,7 +1122,11 @@ small {
   padding-inline: max(19px, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px));
 }
 @media (max-height: 500px) {
-  .app-shell:has(.playing-main) .header { position: static; }
+  .layout-lab .header { position: static; }
+  .app-shell:has(.playing-main) .header-inner {
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
 }
 .theater-brightness {
   display: block;

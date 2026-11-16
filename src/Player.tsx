@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type Ref,
-  type RefObject,
 } from "react";
 import { Icon } from "./Icon";
 import type { Video } from "./model";
@@ -25,9 +24,6 @@ interface Props {
   onSaveQueue?: () => void;
   videoMaximized?: boolean;
   onToggleVideoMaximized?: () => void;
-  onEnterTheater?: () => void;
-  theaterButton?: RefObject<HTMLButtonElement | null>;
-  onTheaterPointerDown?: () => void;
   testMode?: boolean;
   diagnosticSizing?: "auto" | "freeze" | "width";
   onLayoutDiagnostic?: (event: PlayerLayoutDiagnostic) => void;
@@ -63,9 +59,6 @@ export function Player({
   onSaveQueue,
   videoMaximized = false,
   onToggleVideoMaximized,
-  onEnterTheater,
-  theaterButton,
-  onTheaterPointerDown,
   testMode = false,
   diagnosticSizing = "auto",
   onLayoutDiagnostic,
@@ -623,23 +616,14 @@ export function Player({
         <span className="tag">
           {index + 1} / {videos.length} 本
         </span>
-        <div className="player-view-actions">
-          {onToggleVideoMaximized && (
-            <button className={`icon-button ${videoMaximized ? "active" : ""}`}
-              aria-label={videoMaximized ? "操作ボタンを含めて画面に収める" : "動画を画面内で最大化する"}
-              title={videoMaximized ? "操作ボタンを含めて画面に収める" : "動画を画面内で最大化する"}
-              aria-pressed={videoMaximized} onClick={onToggleVideoMaximized}>
-              <Icon name={videoMaximized ? "shrink" : "expand"} />
-            </button>
-          )}
-          {onEnterTheater && (
-            <button className="icon-button" ref={theaterButton}
-              aria-label="シアターモード" title="シアターモード"
-              onPointerDown={onTheaterPointerDown} onClick={onEnterTheater}>
-              <Icon name="theater" />
-            </button>
-          )}
-        </div>
+        {onToggleVideoMaximized && (
+          <button className={`icon-button ${videoMaximized ? "active" : ""}`}
+            aria-label={videoMaximized ? "操作ボタンを含めて画面に収める" : "動画を画面内で最大化する"}
+            title={videoMaximized ? "操作ボタンを含めて画面に収める" : "動画を画面内で最大化する"}
+            aria-pressed={videoMaximized} onClick={onToggleVideoMaximized}>
+            <Icon name={videoMaximized ? "shrink" : "expand"} />
+          </button>
+        )}
       </div>
       <div className="player-shell" ref={host} />
       <div className="player-transport" ref={transport} aria-label="動画の再生操作">
