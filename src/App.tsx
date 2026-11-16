@@ -653,16 +653,9 @@ function CatalogApp({
 
   function startPlayback(from: "resume" | "beginning" | { videoId: string } = "resume") {
     if (!canPlay) return;
-    const start = from === "beginning"
-      ? { index: 0, positionSeconds: 0 }
-      : getQueueStart(
-          saved.queue,
-          from === "resume" ? saved.resumeVideoId : from.videoId,
-          saved.playbackPositions,
-        );
-    const forceBeginning = from === "beginning" ||
-      (from === "resume" && !saved.queue.includes(saved.resumeVideoId ?? ""));
-    beginPlayback(playableQueue, { index: start.index, positionSeconds: forceBeginning ? 0 : undefined }, false);
+    const videoId = typeof from === "object" ? from.videoId : saved.resumeVideoId;
+    const start = getQueueStart(saved.queue, videoId, from === "beginning");
+    beginPlayback(playableQueue, start, false);
   }
 
   function startSinglePlayback() {

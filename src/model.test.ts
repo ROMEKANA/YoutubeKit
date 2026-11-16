@@ -62,20 +62,12 @@ describe("キューと保存データ", () => {
       ),
     ).toEqual(["aqz-KE-bpKQ", "eRsGyueVLvQ", "R6MlUcmOul8"]);
   });
-  it("最後に再生した動画が現在のキューにある場合だけ、その位置から開始する", () => {
+  it("再開動画がなければ先頭を選び、明示した先頭再生だけ0秒を指定する", () => {
     const queue = ["aqz-KE-bpKQ", "eRsGyueVLvQ", "R6MlUcmOul8"];
-    expect(getQueueStart(queue, "eRsGyueVLvQ", { eRsGyueVLvQ: 123 })).toEqual({
-      index: 1,
-      positionSeconds: 123,
-    });
-    expect(getQueueStart(queue, "9bZkp7q19f0", {})).toEqual({
-      index: 0,
-      positionSeconds: 0,
-    });
-    expect(getQueueStart(queue, null, { "aqz-KE-bpKQ": 123 })).toEqual({
-      index: 0,
-      positionSeconds: 0,
-    });
+    expect(getQueueStart(queue, "eRsGyueVLvQ")).toEqual({ index: 1 });
+    expect(getQueueStart(queue, "9bZkp7q19f0")).toEqual({ index: 0 });
+    expect(getQueueStart(queue, null)).toEqual({ index: 0 });
+    expect(getQueueStart(queue, "eRsGyueVLvQ", true)).toEqual({ index: 0, positionSeconds: 0 });
   });
   it("旧形式の保存キューを追加しても、手動で追加したときと同じ状態になる", () => {
     const state = {
@@ -96,7 +88,7 @@ describe("キューと保存データ", () => {
       queue: savedQueue.videoIds.reduce(addToQueue, state.queue),
     });
   });
-  it("旧形式の保存キューで置き換えると、履歴を残して1本目の0秒から開始する", () => {
+  it("旧形式の保存キューで置き換えると、履歴を残して1本目の保存位置から開始する", () => {
     const state = {
       ...restoreState(null),
       queue: ["aqz-KE-bpKQ"],
@@ -113,8 +105,9 @@ describe("キューと保存データ", () => {
     const loaded = loadSavedQueue(state, savedQueue, true);
     expect(loaded.queue).toEqual(savedQueue.videoIds);
     expect(loaded.playbackPositions).toEqual(state.playbackPositions);
-    expect(getQueueStart(loaded.queue, loaded.resumeVideoId, loaded.playbackPositions))
-      .toEqual({ index: 0, positionSeconds: 0 });
+    expect(loaded.resumeVideoId).toBeNull();
+    expect(getQueueStart(loaded.queue, loaded.resumeVideoId))
+      .toEqual(getQueueStart(loaded.queue, loaded.queue[0]));
   });
   it("保存キュー用にUUIDを生成する", () => {
     expect(createSavedQueueId()).toMatch(

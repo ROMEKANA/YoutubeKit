@@ -9,17 +9,18 @@ export function getQueueEditStart(
   before: string[],
   after: string[],
   current: QueueEditStart,
+  playbackPositions: Record<string, number>,
 ): QueueEditStart | null {
   if (!after.length) return null;
   if (after.includes(current.videoId)) return current;
 
-  // 現在の動画を削除したら次へ進み、後続がなければ最後の動画を一時停止状態で選ぶ。
   const previousIndex = Math.max(0, before.indexOf(current.videoId));
-  return {
-    videoId: after[Math.min(previousIndex, after.length - 1)],
-    seconds: 0,
-    autoplay: current.autoplay && previousIndex < after.length,
-  };
+  const next = after[previousIndex];
+  if (next) return { videoId: next, seconds: 0, autoplay: current.autoplay };
+
+  // 後続がない削除では、残った末尾を保存位置から再生する。
+  const last = after[after.length - 1];
+  return { videoId: last, seconds: playbackPositions[last] ?? 0, autoplay: true };
 }
 
 // 切替直後と、保存位置へ移動中の古い時刻は履歴に使わない。

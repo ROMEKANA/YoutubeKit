@@ -3,21 +3,25 @@ import { canSamplePlaybackPosition, getQueueEditStart, PlaylistTracker } from ".
 
 it("並べ替え・別の動画の削除では、再生中の動画IDと秒数を維持する", () => {
   const current = { videoId: "b", seconds: 42.5, autoplay: true };
-  expect(getQueueEditStart(["a", "b", "c"], ["b", "c", "a"], current)).toEqual(current);
-  expect(getQueueEditStart(["a", "b", "c"], ["b", "c"], current)).toEqual(current);
+  expect(getQueueEditStart(["a", "b", "c"], ["b", "c", "a"], current, {})).toEqual(current);
+  expect(getQueueEditStart(["a", "b", "c"], ["b", "c"], current, {})).toEqual(current);
   const paused = { ...current, autoplay: false };
-  expect(getQueueEditStart(["a", "b", "c"], ["a", "c", "b"], paused)).toEqual(paused);
+  expect(getQueueEditStart(["a", "b", "c"], ["a", "c", "b"], paused, {})).toEqual(paused);
 });
 
-it("再生中の動画を削除すると次へ進み、末尾の削除や空になった場合は自動再生しない", () => {
-  const current = { videoId: "b", seconds: 42.5, autoplay: true };
-  expect(getQueueEditStart(["a", "b", "c"], ["a", "c"], current)).toEqual({
-    videoId: "c", seconds: 0, autoplay: true,
+it("再生中の動画を削除すると次へ進み、末尾なら残った末尾の保存位置から再生する", () => {
+  const current = { videoId: "c", seconds: 42.5, autoplay: true };
+  const playbackPositions = { b: 298, c: 42 };
+  expect(getQueueEditStart(["a", "c", "b"], ["a", "b"], current, playbackPositions)).toEqual({
+    videoId: "b", seconds: 0, autoplay: true,
   });
-  expect(getQueueEditStart(["a", "b"], ["a"], current)).toEqual({
-    videoId: "a", seconds: 0, autoplay: false,
+  expect(getQueueEditStart(["a", "b", "c"], ["a", "b"], current, playbackPositions)).toEqual({
+    videoId: "b", seconds: 298, autoplay: true,
   });
-  expect(getQueueEditStart(["b"], [], current)).toBeNull();
+  expect(getQueueEditStart(["b", "c"], ["b"], { ...current, autoplay: false }, {})).toEqual({
+    videoId: "b", seconds: 0, autoplay: true,
+  });
+  expect(getQueueEditStart(["c"], [], current, playbackPositions)).toBeNull();
 });
 
 it("動画の切替直後と位置復元中は再生位置の保存を待つ", () => {

@@ -306,15 +306,13 @@ export function loadSavedQueue(state: SavedState, savedQueue: SavedQueue, replac
   return { ...state, queue: appendQueue(state.queue, savedQueue.videoIds) };
 }
 
-// 最後に再生した動画が現在のキューに含まれる場合だけ、その位置から開始する。
-export function getQueueStart(
-  queue: string[],
-  resumeVideoId: string | null,
-  playbackPositions: Record<string, number>,
-): { index: number; positionSeconds: number } {
-  const index = resumeVideoId ? queue.indexOf(resumeVideoId) : -1;
-  if (index < 0 || !resumeVideoId) return { index: 0, positionSeconds: 0 };
-  return { index, positionSeconds: playbackPositions[resumeVideoId] ?? 0 };
+// 開始する動画だけを選び、実際の再生が始まってからPlayerが保存位置を読む。
+export function getQueueStart(queue: string[], videoId: string | null, fromBeginning = false): {
+  index: number;
+  positionSeconds?: number;
+} {
+  if (fromBeginning) return { index: 0, positionSeconds: 0 };
+  return { index: Math.max(0, videoId === null ? -1 : queue.indexOf(videoId)) };
 }
 
 // キューの操作は動画ID単位に行い、非表示状態とは独立させる。

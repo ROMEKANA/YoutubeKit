@@ -716,6 +716,7 @@ export function Player({
       videos.map((video) => video.id),
       next.map((video) => video.id),
       { videoId, seconds, autoplay: state === 1 || state === 3 },
+      playbackPositionsRef.current,
     );
     if (!saved) {
       onQueueEdit([]);
