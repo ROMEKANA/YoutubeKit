@@ -27,6 +27,18 @@ const localSettings = new Set([
 export const equal = (a: unknown, b: unknown) =>
   JSON.stringify(a) === JSON.stringify(b);
 
+// 旧形式の秒数には記録時刻が無いため、比較では記録時刻付きの位置を優先する。
+export function cloudPosition(value: unknown): { seconds: number; recordedAt: number } | null {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    return { seconds: value, recordedAt: 0 };
+  if (!value || typeof value !== "object") return null;
+  const { seconds, recordedAt } = value as Record<string, unknown>;
+  if (typeof seconds !== "number" || !Number.isSafeInteger(seconds) || seconds < 0 ||
+      typeof recordedAt !== "number" || !Number.isSafeInteger(recordedAt) || recordedAt <= 0)
+    return null;
+  return { seconds, recordedAt };
+}
+
 // 全状態の上書きを避け、設定・動画・保存キューをそれぞれ独立した項目へ分ける。
 export function cloudValues(
   state: SavedState,
@@ -36,8 +48,10 @@ export function cloudValues(
   for (const queue of state.savedQueues)
     values[`queue/${queue.id}`] = JSON.stringify(queue);
   for (const id of state.hidden) values[`hidden/${id}`] = "true";
-  for (const [id, seconds] of Object.entries(state.playbackPositions))
-    values[`position/${id}`] = JSON.stringify(seconds);
+  for (const [id, seconds] of Object.entries(state.playbackPositions)) {
+    const recordedAt = state.playbackPositionRecordedAt[id];
+    values[`position/${id}`] = JSON.stringify(recordedAt > 0 ? { seconds, recordedAt } : seconds);
+  }
   for (const [key, value] of Object.entries(state.settings)) {
     if (!localSettings.has(key))
       values[`setting/${key}`] = JSON.stringify(value);
@@ -78,7 +92,7 @@ export function validCloudValue(key: string, value: string): boolean {
     if (kind === "hidden")
       return /^[\w-]{11}$/.test(id) && typeof data === "boolean";
     if (kind === "position")
-      return /^[\w-]{11}$/.test(id) && Number.isSafeInteger(data) && data >= 0;
+      return /^[\w-]{11}$/.test(id) && cloudPosition(data) !== null;
     if (kind === "setting") {
       if (!Object.hasOwn(defaultSettings, id) || localSettings.has(id))
         return false;
@@ -114,6 +128,7 @@ export function applyCloud(
     hidden: [...state.hidden],
     hiddenAt: { ...state.hiddenAt },
     playbackPositions: { ...state.playbackPositions },
+    playbackPositionRecordedAt: { ...state.playbackPositionRecordedAt },
   };
   const queues = new Map(state.savedQueues.map((queue) => [queue.id, queue]));
   for (const entry of entries) {
@@ -131,9 +146,12 @@ export function applyCloud(
         next.hidden = next.hidden.filter((item) => item !== id);
         delete next.hiddenAt[id];
       }
-    } else if (kind === "position" && !playing)
-      next.playbackPositions[id] = value;
-    else if (kind === "setting") Object.assign(next.settings, { [id]: value });
+    } else if (kind === "position" && !playing) {
+      const position = cloudPosition(value);
+      if (!position || position.recordedAt < (next.playbackPositionRecordedAt[id] ?? 0)) continue;
+      next.playbackPositions[id] = position.seconds;
+      if (position.recordedAt > 0) next.playbackPositionRecordedAt[id] = position.recordedAt;
+    } else if (kind === "setting") Object.assign(next.settings, { [id]: value });
   }
   next.savedQueues = [...queues.values()];
   // 上限・下限の別々の変更が交差した場合も、一覧の条件を有効な範囲へ戻す。

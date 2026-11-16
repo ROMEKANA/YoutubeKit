@@ -505,6 +505,7 @@ function CatalogApp({
     setSaved((state) => ({
       ...state,
       playbackPositions: { ...state.playbackPositions, [video.id]: position },
+      playbackPositionRecordedAt: { ...state.playbackPositionRecordedAt, [video.id]: watchedAt },
       watchedChannelAt: { ...state.watchedChannelAt, [video.channelId]: watchedAt },
     }));
     setMenuVideo(null);
@@ -890,19 +891,15 @@ function CatalogApp({
             onClose={endPlayback}
             onCompleteChange={setPlaybackComplete}
             onVideoPlaying={recordChannelWatch}
-            onPlaybackProgress={(videoId, positionSeconds) => {
-              if (!session) return;
+            onPlaybackProgress={(videoId, positionSeconds, recordedAt) => {
+              if (!session || positionSeconds <= 0) return;
               setSaved((state) => {
-                // 単独再生の位置は動画履歴に記録し、キューの再開先は保持する。
-                const resumeVideoId = session.single ? state.resumeVideoId : videoId;
-                const previousPosition = state.playbackPositions[videoId] ?? 0;
-                const changedPosition = positionSeconds > 0 && previousPosition !== positionSeconds;
-                if (!changedPosition && resumeVideoId === state.resumeVideoId)
-                  return state;
-                const playbackPositions = changedPosition
-                  ? { ...state.playbackPositions, [videoId]: positionSeconds }
-                  : state.playbackPositions;
-                return { ...state, resumeVideoId, playbackPositions };
+                if (recordedAt <= (state.playbackPositionRecordedAt[videoId] ?? 0)) return state;
+                return {
+                  ...state,
+                  playbackPositions: { ...state.playbackPositions, [videoId]: positionSeconds },
+                  playbackPositionRecordedAt: { ...state.playbackPositionRecordedAt, [videoId]: recordedAt },
+                };
               });
             }}
             onSaveQueue={(videoIds) => openSaveQueue(videoIds, null)}

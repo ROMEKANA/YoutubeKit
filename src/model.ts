@@ -43,6 +43,7 @@ export interface SavedState {
   queue: string[];
   resumeVideoId: string | null;
   playbackPositions: Record<string, number>;
+  playbackPositionRecordedAt: Record<string, number>;
   savedQueues: SavedQueue[];
   hidden: string[];
   hiddenAt: Record<string, number>;
@@ -80,6 +81,7 @@ export function restoreState(raw: string | null): SavedState {
     queue: [],
     resumeVideoId: null,
     playbackPositions: {},
+    playbackPositionRecordedAt: {},
     savedQueues: [],
     hidden: [],
     hiddenAt: {},
@@ -197,11 +199,22 @@ export function restoreState(raw: string | null): SavedState {
     const legacyPosition = playbackPosition(value.resumePositionSeconds);
     if (resumeVideoId && legacyPosition > 0 && !positions[resumeVideoId])
       positions[resumeVideoId] = legacyPosition;
+    const recordedAt = Object.fromEntries(
+      Object.entries(value.playbackPositionRecordedAt ?? {}).flatMap(([id, time]) =>
+        videoId(id) && typeof time === "number" && Number.isSafeInteger(time) && time > 0 &&
+        Object.hasOwn(value.playbackPositions ?? {}, id)
+          ? [[id, time] as const]
+          : [],
+      ),
+    );
+    // 記録時刻付きの0秒は、巻き戻しやバックアップ復元で確定した再生位置。
+    for (const id of Object.keys(recordedAt)) positions[id] ??= 0;
     const hidden = ids(value.hidden);
     return {
       queue: ids(value.queue),
       resumeVideoId,
       playbackPositions: positions,
+      playbackPositionRecordedAt: recordedAt,
       savedQueues,
       hidden,
       hiddenAt: Object.fromEntries(hidden.flatMap((id) => {

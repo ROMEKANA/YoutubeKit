@@ -147,6 +147,7 @@ describe("キューと保存データ", () => {
       queue: ["aqz-KE-bpKQ"],
       resumeVideoId: "aqz-KE-bpKQ",
       playbackPositions: { "aqz-KE-bpKQ": 83 },
+      playbackPositionRecordedAt: { "aqz-KE-bpKQ": 1234 },
       savedQueues: [
         {
           id: "550e8400-e29b-41d4-a716-446655440000",

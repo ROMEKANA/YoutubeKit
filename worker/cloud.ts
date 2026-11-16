@@ -1,6 +1,7 @@
 import { requireSession, type WorkerContext } from "./auth";
 import { AppError } from "./errors";
 import {
+  cloudPosition,
   validCloudValue,
   type CloudChange,
   type CloudEntry,
@@ -15,6 +16,16 @@ function invalid(): never {
   );
 }
 
+// 旧版への応答では従来の秒数形式を保ち、記録時刻は新しいクライアントへ返す。
+function formatPositions(c: WorkerContext, rows: CloudEntry[]): CloudEntry[] {
+  if (c.req.query("positionTimes") === "1") return rows;
+  return rows.map((row) => {
+    if (!row.key.startsWith("position/") || !row.value.startsWith("{")) return row;
+    const sample = cloudPosition(JSON.parse(row.value));
+    return sample ? { ...row, value: JSON.stringify(sample.seconds) } : row;
+  });
+}
+
 // キー順でページを返し、保存件数が増えても一度に全件を転送しない。
 export async function readCloud(c: WorkerContext): Promise<Response> {
   const session = await requireSession(c);
@@ -25,12 +36,12 @@ export async function readCloud(c: WorkerContext): Promise<Response> {
     .bind(session.sub, after)
     .all<CloudEntry>();
   return c.json({
-    entries: rows.results.slice(0, 200),
+    entries: formatPositions(c, rows.results.slice(0, 200)),
     next: rows.results.length > 200 ? rows.results[199].key : null,
   });
 }
 
-// 版番号をSQLの条件に含め、同時送信や古いブラウザによる上書きを防ぐ。
+// 再生位置は記録時刻で、ほかの項目は版番号で競合を判定する。
 export async function writeCloud(c: WorkerContext): Promise<Response> {
   const session = await requireSession(c, true);
   const input = await c.req.json().catch(() => invalid());
@@ -48,6 +59,11 @@ export async function writeCloud(c: WorkerContext): Promise<Response> {
       keys.has(change.key)
     )
       invalid();
+    if (change.key.startsWith("position/")) {
+      const sample = cloudPosition(JSON.parse(change.value));
+      if (!sample) invalid();
+      change.value = JSON.stringify(sample.recordedAt ? sample : sample.seconds);
+    }
     keys.add(change.key);
   }
   const time = Date.now();
@@ -58,7 +74,14 @@ export async function writeCloud(c: WorkerContext): Promise<Response> {
           `INSERT INTO cloud_entries(sub, key, value, revision, updated_at)
        SELECT ?, ?, ?, 1, ? WHERE ? = 0 OR EXISTS (SELECT 1 FROM cloud_entries WHERE sub = ? AND key = ?)
        ON CONFLICT(sub, key) DO UPDATE SET value = excluded.value, revision = cloud_entries.revision + 1, updated_at = excluded.updated_at
-       WHERE cloud_entries.revision = ? AND cloud_entries.value != excluded.value
+       WHERE (CASE
+         WHEN cloud_entries.key LIKE 'position/%' AND json_type(excluded.value) = 'object'
+           THEN json_type(cloud_entries.value) != 'object'
+             OR json_extract(excluded.value, '$.recordedAt') > json_extract(cloud_entries.value, '$.recordedAt')
+         WHEN cloud_entries.key LIKE 'position/%' AND json_type(cloud_entries.value) = 'object'
+           THEN 0
+         ELSE cloud_entries.revision = ?
+       END) AND cloud_entries.value != excluded.value
        AND (cloud_entries.key NOT LIKE 'queue/%' OR (cloud_entries.value != 'null' AND excluded.value = 'null'))`,
         ).bind(
           session.sub,
@@ -83,7 +106,7 @@ export async function writeCloud(c: WorkerContext): Promise<Response> {
       )
     : [];
   const entries = results.flatMap((result) => result.results);
-  return c.json({ entries });
+  return c.json({ entries: formatPositions(c, entries) });
 }
 
 // 各ブラウザの同期前の状態を一日一世代保存し、直近30世代を保持する。

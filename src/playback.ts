@@ -23,8 +23,8 @@ export function getQueueEditStart(
 }
 
 // 切替直後と、保存位置へ移動中の古い時刻は履歴に使わない。
-export function canSamplePlaybackPosition(seconds: number, now: number, after: number, target: number | null): boolean {
-  return Number.isFinite(seconds) && seconds >= 0 && now >= after &&
+export function canSamplePlaybackPosition(seconds: number, now: number, after: number, target: number | null, first: boolean): boolean {
+  return Number.isFinite(seconds) && seconds >= (first ? 2 : 0) && now >= after &&
     (target === null || seconds >= target - 1);
 }
 

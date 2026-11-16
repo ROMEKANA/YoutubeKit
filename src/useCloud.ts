@@ -10,6 +10,7 @@ import {
   absentValue,
   applyCloud,
   cloudValues,
+  cloudPosition,
   equal,
   type CloudChange,
   type CloudEntry,
@@ -253,7 +254,9 @@ export function useCloud(
   }
 
   async function request(path: string, body?: unknown) {
-    const response = await fetch(`/api/cloud/${path}`, {
+    const url = new URL(`/api/cloud/${path}`, window.location.origin);
+    if (url.pathname === "/api/cloud/state") url.searchParams.set("positionTimes", "1");
+    const response = await fetch(url, {
       method: body === undefined ? "GET" : "POST",
       credentials: "same-origin",
       cache: "no-store",
@@ -478,6 +481,26 @@ export function useCloud(
           ? { ...queue, id: createSavedQueueId() }
           : queue,
       );
+      // 明示的な復元で位置が変わる項目は、復元操作そのものを新しい記録として送る。
+      const restoreTime = Date.now();
+      const positionKeys = new Set([
+        ...Object.keys(meta.rows).filter(isPosition),
+        ...Object.keys(restored.playbackPositions).map((id) => `position/${id}`),
+      ]);
+      for (const key of positionKeys) {
+        const id = key.slice("position/".length);
+        const remote = cloudPosition(JSON.parse(meta.rows[key]?.value ?? "0"));
+        const seconds = restored.playbackPositions[id] ?? 0;
+        if (seconds !== (remote?.seconds ?? 0)) {
+          restored.playbackPositions[id] = seconds;
+          restored.playbackPositionRecordedAt[id] = Math.max(restoreTime, (remote?.recordedAt ?? 0) + 1);
+        } else if (remote?.recordedAt) {
+          restored.playbackPositions[id] = seconds;
+          restored.playbackPositionRecordedAt[id] = remote.recordedAt;
+        } else {
+          delete restored.playbackPositionRecordedAt[id];
+        }
+      }
       const values = cloudValues(restored, meta.device);
       meta.pending = {};
       for (const key of new Set([

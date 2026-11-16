@@ -45,6 +45,23 @@ describe("クラウド状態の統合", () => {
       applyCloud(merged, [row(`queue/${queue.id}`, null)], false).savedQueues,
     ).toEqual([other]);
   });
+  it("再生位置を記録時刻付きで同期し、古い受信や旧形式では上書きしない", () => {
+    const id = "aqz-KE-bpKQ";
+    const key = `position/${id}`;
+    const device = "12345678-1234-4123-8123-123456789abc";
+    const state = restoreState(JSON.stringify({
+      playbackPositions: { [id]: 91 },
+      playbackPositionRecordedAt: { [id]: 2000 },
+    }));
+    expect(JSON.parse(cloudValues(state, device)[key])).toEqual({ seconds: 91, recordedAt: 2000 });
+    const row = (value: unknown) => ({ key, value: JSON.stringify(value), revision: 1, updatedAt: 9000 });
+    expect(applyCloud(state, [row({ seconds: 300, recordedAt: 1000 }), row(400)], false).playbackPositions[id]).toBe(91);
+    const next = applyCloud(state, [row({ seconds: 0, recordedAt: 3000 })], false);
+    expect(next.playbackPositions[id]).toBe(0);
+    expect(restoreState(JSON.stringify(next)).playbackPositionRecordedAt[id]).toBe(3000);
+    expect(restoreState(JSON.stringify(next)).playbackPositions[id]).toBe(0);
+  });
+
   it("端末用の表示設定を送らず、非表示解除と再生位置ゼロを受け入れる", () => {
     const state = restoreState(null);
     const values = cloudValues(state, "12345678-1234-4123-8123-123456789abc");

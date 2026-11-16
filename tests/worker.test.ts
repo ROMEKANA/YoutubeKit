@@ -73,6 +73,28 @@ describe("クラウド同期API", () => {
     const invalid = await post("/api/cloud/state", { changes: [{ key, value: "-1", base: 3 }] });
     expect(invalid.status).toBe(400);
   });
+  it("再生位置は新しい記録時刻を採用し、版番号と到着順を逆転しても維持する", async () => {
+    await authenticated();
+    const key = "position/aqz-KE-bpKQ";
+    expect((await change(key, 80, 0)).revision).toBe(1);
+    async function send(seconds: number, recordedAt: number, base: number) {
+      const response = await post("/api/cloud/state?positionTimes=1", {
+        changes: [{ key, value: JSON.stringify({ seconds, recordedAt }), base }],
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      const result = await response.json<{ entries: { value: string; revision: number }[] }>();
+      return result.entries[0];
+    }
+    expect((await send(90, 2000, 0)).revision).toBe(2);
+    expect(JSON.parse((await send(120, 1000, 2)).value)).toEqual({ seconds: 90, recordedAt: 2000 });
+    const rewind = await send(30, 3000, 0);
+    expect(JSON.parse(rewind.value)).toEqual({ seconds: 30, recordedAt: 3000 });
+    expect((await send(40, 3000, rewind.revision)).value).toBe(rewind.value);
+    expect((await change(key, 40, rewind.revision)).value).toBe("30");
+    const oldRead = await mf.dispatchFetch(`${origin}/api/cloud/state`, { headers: { Cookie: sessionCookie } });
+    const oldValues = await oldRead.json<{ entries: { key: string; value: string }[] }>();
+    expect(oldValues.entries.find((entry) => entry.key === key)?.value).toBe("30");
+  });
   it("バックアップを再送しても増やさず、削除前の内容を復元用に返す", async () => {
     await authenticated();
     const snapshot = restoreState(JSON.stringify({ savedQueues: [queue] }));

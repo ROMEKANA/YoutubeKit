@@ -21,10 +21,11 @@ it("再生中の動画を削除すると次へ進み、末尾の削除や空に�
 });
 
 it("動画の切替直後と位置復元中は再生位置の保存を待つ", () => {
-  expect(canSamplePlaybackPosition(1, 1000, 2000, null)).toBe(false);
-  expect(canSamplePlaybackPosition(1, 3000, 2000, 92)).toBe(false);
-  expect(canSamplePlaybackPosition(92, 3000, 2000, 92)).toBe(true);
-  expect(canSamplePlaybackPosition(3, 3000, 2000, null)).toBe(true);
+  expect(canSamplePlaybackPosition(1, 1000, 2000, null, true)).toBe(false);
+  expect(canSamplePlaybackPosition(1, 3000, 2000, null, true)).toBe(false);
+  expect(canSamplePlaybackPosition(1, 3000, 2000, 92, false)).toBe(false);
+  expect(canSamplePlaybackPosition(92, 3000, 2000, 92, true)).toBe(true);
+  expect(canSamplePlaybackPosition(3, 3000, 2000, null, true)).toBe(true);
 });
 
 it("途中の終了では完了せず、最終動画を再生した後だけ完了する", () => {

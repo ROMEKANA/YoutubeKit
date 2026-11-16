@@ -2,7 +2,7 @@
 
 観たい動画を選び、選んだ分だけ再生する、個人用YouTubeキューアプリです。
 
-**v1.2.19** / [公開アプリ](https://youtube-kit.tokana2212.workers.dev/) / [スマホでの使い方](docs/スマホでの使い方.md)
+**v1.2.20** / [公開アプリ](https://youtube-kit.tokana2212.workers.dev/) / [スマホでの使い方](docs/スマホでの使い方.md)
 
 横画面の映像ずれを調べる場合は、設定の「表示ずれの比較画面」または [表示比較](https://youtube-kit.tokana2212.workers.dev/?lab=layout) を使います。条件・手順・結果の読み方は [表示ずれの実機切り分け](docs/表示ずれの実機切り分け.md) を参照してください。
 

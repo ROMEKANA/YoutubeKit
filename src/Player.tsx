@@ -240,7 +240,9 @@ export function Player({
     const recordedAt = Date.now();
     if (!video || current !== lastPlayingIndex.current ||
         video.id !== resumeCheckedVideoId.current || loadingEdit.current ||
-        !canSamplePlaybackPosition(seconds, recordedAt, sampleAfter.current, pendingRestoreSeconds.current))
+        !canSamplePlaybackPosition(
+          seconds, recordedAt, sampleAfter.current, pendingRestoreSeconds.current, lastPlaybackSample.current === null,
+        ))
       return null;
     pendingRestoreSeconds.current = null;
     const sample = { videoId: video.id, positionSeconds: Math.floor(seconds), recordedAt };
@@ -405,6 +407,7 @@ export function Player({
           instance.pauseVideo();
         }
         resumeCheckedVideoId.current = null;
+        setResumeNotice("");
         setPlaying(false);
         setStatus("キュー再生を終了しました。");
       },
@@ -704,7 +707,8 @@ export function Player({
     const restore = restoreAfterEdit.current;
     const measured = restore?.videoId === videoId
       ? restore.seconds
-      : pendingRestoreSeconds.current ?? instance.getCurrentTime();
+      : (videoId === resumeCheckedVideoId.current ? pendingRestoreSeconds.current : null)
+        ?? instance.getCurrentTime();
     const seconds = Number.isFinite(measured) && measured >= 0
       ? measured
       : recordedQueuePositions.current[videoId] ?? playbackPositionsRef.current[videoId] ?? 0;
