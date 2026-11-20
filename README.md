@@ -58,11 +58,11 @@ npm.cmd run secrets:init
 
 `.dev.vars` がなければ作成し、32バイトの暗号鍵を自動生成します。既存ファイルは上書きしません。
 
-1. [Google Cloud Console](https://console.cloud.google.com/) で自分用のプロジェクトを作成し、YouTube Data API v3を有効にします。
-2. Google Auth Platformでアプリ情報・連絡先を設定します。個人用なら対象ユーザーをExternal、公開状態をTestingにし、テストユーザーへ自分のメールを追加します。
-3. データアクセスに `openid`、`email`、`https://www.googleapis.com/auth/youtube.readonly` を設定します。書き込み権限や別のYouTube APIキーは不要です。
-4. OAuthクライアントを **ウェブアプリケーション** として作成します。承認済みリダイレクトURIへ `http://127.0.0.1:5173/auth/callback` を登録します。
-5. 公開URLが決まったら、そのURLに `/auth/callback` を付けたURIも同じクライアントへ追加します。
+1. YouTubeKitで使うGoogleアカウントで [Personal モードの設定画面](https://console.cloud.google.com/auth/overview/personal) を開きます。作成したアカウントだけがこのクライアントを使用できます。
+2. 新しいPersonalプロジェクトを選び、**ウェブ アプリケーション** のOAuthクライアントを作成します。ローカルで使う場合は承認済みリダイレクトURIへ `http://127.0.0.1:5173/auth/callback` を登録します。公開用には公開URLに `/auth/callback` を付けたURIも登録します。
+3. 作成したプロジェクトで [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) を有効にし、OAuthクライアントの認証情報を安全な場所に保存します。
+
+YouTubeKitは `openid`、`email`、`https://www.googleapis.com/auth/youtube.readonly` を要求します。別のYouTube APIキーは不要です。Personal モードではTestingの7日間の認可期限と未確認アプリの警告が適用されません。 [Google の説明](https://support.google.com/cloud/answer/15544987#personal-mode)
 
 `.dev.vars` を手元のエディターで編集します。
 
@@ -154,6 +154,22 @@ Cloudflareのログイン期限が切れた場合は `npx.cmd wrangler login` �
 
 旧版でGoogle接続後や再読み込み時に `ERR_FAILED` が出た場合は、自分の公開URLの `/recover` を開き、「修正版を適用して開く」を押します。
 
+## 既存の公開アプリをPersonal モードへ切り替える
+
+Externalのプロジェクトを使っている場合は、YouTubeKitを利用中の同じGoogleアカウントでPersonal用のクライアントを新しく作成します。
+
+1. [Personal モードの設定画面](https://console.cloud.google.com/auth/overview/personal) でウェブ アプリケーションを作成し、現在の公開URLに `/auth/callback` を付けたURIを登録します。
+2. 新しいプロジェクトで [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) を有効にします。作成画面からOAuthクライアントのJSONをダウンロードし、Git管理外の場所に保存します。
+3. プロジェクトのフォルダから以下を実行します。パスはダウンロードしたJSONの実際のパスに置き換えます。
+
+```powershell
+npm.cmd run deploy:secrets -- --oauth-client "C:\path\to\client_secret.json"
+```
+
+4. 公開アプリを開き、同じGoogleアカウントで連携して、動画一覧の更新が通ることを確認します。すでにログインしている場合は、設定から一度「ログアウト」してからGoogleに接続し直せます。「接続解除とサーバーデータ削除」は保存データを削除します。
+
+切り替えコマンドは本番WorkerのOAuth Client IDとSecretをまとめて更新します。公開URL、D1、暗号鍵、許可アカウントの設定を引き継ぎます。ローカルでも同じクライアントを使う場合は、ローカル用リダイレクトURIを登録して `.dev.vars` のIDとSecretも更新してください。旧クライアントへ戻す場合は、旧クライアントのJSONで同じコマンドを実行して再連携します。
+
 ## Googleアカウントを変える
 
 同じGoogleアカウントへ再接続するだけなら、設定の「Googleへ再接続」を使います。別のアカウントへの変更には所有者固定の切り替えが必要です。
@@ -161,7 +177,7 @@ Cloudflareのログイン期限が切れた場合は `npx.cmd wrangler login` �
 既存データを消さずに変更する方法は、**新しいD1で別の所有者として初期化する**ことです。以下の作業は自分で切り替えるときだけ行ってください。
 
 1. 必要なら現在のアカウントでログアウトします。旧DBは残します。接続解除ボタンだけでは所有者固定は解除されません。
-2. Google CloudのTestingを使う場合、新しいアカウントをテストユーザーへ追加します。OAuthクライアントも変える場合は、新しいクライアントへ同じcallback URIを登録します。
+2. Personal モードを使う場合は、新しいアカウントでPersonal用のクライアントを作成し、同じコールバックURIを登録します。既存のExternal / Testingを使う場合は、新しいアカウントをテストユーザーへ追加します。
 3. 自分のCloudflareに別名のD1を作成します。例: `npx.cmd wrangler d1 create youtube-kit-next`。
 4. `wrangler.production.jsonc` のDB名・IDを新しいDBへ変更します。将来作り直す場合に備え `wrangler.jsonc` の本番側も揃えます。
 5. `.dev.vars` の許可メールを新しいアカウントにし、subを使わない場合は空欄にします。Client ID・Secretを変更する場合もここへ設定します。暗号鍵は安易に変更しません。

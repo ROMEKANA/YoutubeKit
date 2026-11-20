@@ -2,7 +2,8 @@ import { expect, it } from "vitest";
 // 配備スクリプトもダミー値だけで検証し、Cloudflareへは接続しない。
 // @ts-expect-error ビルド用のJavaScriptモジュールを直接検証する。
 import * as production from "../scripts/production.mjs";
-const { productionConfig, productionSecrets, parseConfig } = production;
+const { googleOAuthSecrets, productionConfig, productionSecrets, parseConfig } =
+  production;
 
 const base = {
   name: "local",
@@ -71,4 +72,26 @@ it("公開用には許可した項目だけ渡し、既に指定した所有者�
       { vars: {} },
     ),
   ).toThrow();
+});
+
+it("OAuth切り替えでは本番コールバックを確認し、IDとSecretだけ送る", () => {
+  const origin = "https://app.example.net";
+  const credentials = {
+    web: {
+      client_id: "test.apps.googleusercontent.com",
+      client_secret: "test-secret",
+      project_id: "test-project",
+      redirect_uris: [`${origin}/auth/callback`],
+    },
+  };
+  expect(googleOAuthSecrets(credentials, origin)).toEqual({
+    GOOGLE_CLIENT_ID: "test.apps.googleusercontent.com",
+    GOOGLE_CLIENT_SECRET: "test-secret",
+  });
+  expect(() =>
+    googleOAuthSecrets(credentials, "https://other.example.net"),
+  ).toThrow("リダイレクトURI");
+  expect(() =>
+    googleOAuthSecrets({ installed: credentials.web }, origin),
+  ).toThrow("ウェブ用OAuthクライアント");
 });

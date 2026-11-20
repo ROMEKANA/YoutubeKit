@@ -77,6 +77,31 @@ export function productionSecrets(local, config) {
   return result;
 }
 
+// Googleが発行したWebクライアントから、本番の再接続に必要な2項目だけを取り出す。
+export function googleOAuthSecrets(credentials, origin) {
+  const client = credentials?.web;
+  if (
+    typeof client?.client_id !== "string" ||
+    !client.client_id.endsWith(".apps.googleusercontent.com") ||
+    typeof client.client_secret !== "string" ||
+    !client.client_secret.trim()
+  )
+    throw new Error(
+      "Google Cloudでダウンロードしたウェブ用OAuthクライアントのJSONを指定してください。",
+    );
+  if (
+    !Array.isArray(client.redirect_uris) ||
+    !client.redirect_uris.includes(`${origin}/auth/callback`)
+  )
+    throw new Error(
+      "OAuthクライアントの承認済みリダイレクトURIに本番の /auth/callback を登録し、JSONを確認してください。",
+    );
+  return {
+    GOOGLE_CLIENT_ID: client.client_id,
+    GOOGLE_CLIENT_SECRET: client.client_secret,
+  };
+}
+
 export function parseConfig(text) {
   const errors = [];
   const config = parse(text, errors, { allowTrailingComma: true });
@@ -148,6 +173,24 @@ async function main() {
   if (config.vars?.ALLOW_DEMO !== "false")
     throw new Error("本番のALLOW_DEMOはfalseにしてください。");
   if (command === "secrets") {
+    if (args[0] === "--oauth-client") {
+      if (args.length !== 2)
+        throw new Error(
+          "--oauth-client の後にGoogleの認証情報JSONのパスを指定してください。",
+        );
+      let credentials;
+      try {
+        credentials = JSON.parse(await readFile(args[1], "utf8"));
+      } catch {
+        throw new Error(
+          "Googleの認証情報JSONを読み込めません。パスとファイル形式を確認してください。",
+        );
+      }
+      // IDとSecretを同じデプロイで差し替え、暗号鍵と所有者設定を保持する。
+      const secrets = googleOAuthSecrets(credentials, config.vars.APP_ORIGIN);
+      wrangler(["secret", "bulk"], JSON.stringify(secrets));
+      return;
+    }
     let local;
     try {
       local = parseEnv(await readFile(new URL(".dev.vars", root), "utf8"));
