@@ -1792,7 +1792,7 @@ function CatalogApp({
               表示の明るさ <output>{settings.theaterBrightness}%</output>
               <input
                 type="range"
-                min="1"
+                min="0"
                 max="100"
                 step="1"
                 value={settings.theaterBrightness}
