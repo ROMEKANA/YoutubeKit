@@ -20,13 +20,13 @@ import {
 } from "./model";
 
 describe("キューと保存データ", () => {
-  it("シアター明るさ1〜100%を復元し、旧データと範囲外は初期値へ戻す", () => {
-    for (const theaterBrightness of [1, 20, 100])
+  it("シアター明るさ0〜100%を復元し、旧データと範囲外は初期値へ戻す", () => {
+    for (const theaterBrightness of [0, 20, 100])
       expect(
         restoreState(JSON.stringify({ settings: { theaterBrightness } }))
           .settings.theaterBrightness,
       ).toBe(theaterBrightness);
-    for (const theaterBrightness of [0, 101, 1.5, "10", null])
+    for (const theaterBrightness of [101, 1.5, "10", null])
       expect(
         restoreState(JSON.stringify({ settings: { theaterBrightness } }))
           .settings.theaterBrightness,

@@ -125,6 +125,13 @@ export function restoreState(raw: string | null): SavedState {
       input <= max
         ? input
         : fallback;
+    const number0 = (input: unknown, fallback: number, max: number) =>
+      typeof input === "number" &&
+      Number.isInteger(input) &&
+      input >= 0 &&
+      input <= max
+        ? input
+        : fallback;
     const settings = value.settings ?? {};
     const percent = (input: unknown, fallback: number) =>
       typeof input === "number" && Number.isInteger(input) && input >= 0 && input <= 100
@@ -247,7 +254,7 @@ export function restoreState(raw: string | null): SavedState {
         durationMaxSeconds: durationOptions.includes(settings.durationMaxSeconds) ? settings.durationMaxSeconds : -1,
         excludeByWatchedRange: settings.excludeByWatchedRange !== false,
         excludeHiddenVideos: settings.excludeHiddenVideos !== false,
-        theaterBrightness: number(settings.theaterBrightness, 20, 100),
+        theaterBrightness: number0(settings.theaterBrightness, 20, 100),
         playbackSaveIntervalSeconds:
           typeof settings.playbackSaveIntervalSeconds === "number" &&
           playbackSaveIntervals.includes(
