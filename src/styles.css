@@ -1302,6 +1302,117 @@ small {
   font-size: 20px;
   margin-bottom: 9px;
 }
+.video-interactions,
+.video-description,
+.youtube-privacy-consent {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.youtube-privacy-consent {
+  justify-items: start;
+}
+.video-interaction-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.video-interaction-buttons .secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+}
+.video-interaction-buttons .selected-rating {
+  color: #1544a1;
+  border-color: currentColor;
+}
+.video-interaction-buttons .selected-rating svg {
+  fill: currentColor;
+}
+.video-description {
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.description-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  font-size: 15px;
+  scroll-margin-block-start: 80px;
+}
+.description-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.description-text {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.description-timestamp {
+  min-height: 28px;
+  padding: 0 2px;
+  color: #1855ac;
+  text-decoration: underline;
+}
+.modal:has(.comment-editor) {
+  max-height: min(88dvh, 680px);
+  overscroll-behavior: contain;
+}
+.comment-editor,
+.comment-input {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.comment-video {
+  font-weight: 700;
+}
+.comment-editor textarea {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: inherit;
+  background: var(--paper);
+  font: inherit;
+  font-size: 16px;
+}
+.comment-editor .modal-footer {
+  flex-wrap: wrap;
+}
+@media (prefers-color-scheme: dark) {
+  .video-description,
+  .modal:has(.comment-editor) {
+    --line: #525b58;
+    --paper: #222724;
+    color: #f3f5f4;
+    background: var(--paper);
+  }
+  .video-description .panel-note,
+  .comment-editor .panel-note {
+    color: #c6cfca;
+  }
+  .description-timestamp,
+  .video-description .text-button,
+  .comment-editor :is(a, .text-button) {
+    color: #a8c9ff;
+  }
+  .comment-editor .secondary {
+    color: #f3f5f4;
+    border-color: var(--line);
+    background: var(--paper);
+  }
+}
 .player-actions {
   display: flex;
   flex-wrap: nowrap;

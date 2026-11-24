@@ -15,6 +15,7 @@ export interface ServerStatus {
   account?: { sub: string; email: string };
   csrfToken?: string;
   connected?: boolean;
+  youtube?: { policyAccepted: boolean; canWrite: boolean; channel: { id: string; title: string; checkedAt: number } | null };
 }
 interface Catalog {
   videos: Video[];
@@ -60,7 +61,7 @@ export class ApiError extends Error {
 }
 
 // Cookieは同一オリジンに限定し、秘密情報をフロントエンドへ渡さない。
-async function request(
+export async function request(
   path: string,
   options: RequestInit = {},
   signal?: AbortSignal,
@@ -479,10 +480,10 @@ export function useCatalog() {
         setQueueVideos(await readSavedVideos(ids, nextController.signal));
       }
       await readCatalog(status, nextController.signal);
-      if (
-        new URLSearchParams(window.location.search).get("auth_error") ===
-        "denied"
-      )
+      const authError = new URLSearchParams(window.location.search).get("auth_error");
+      if (authError === "youtube_write")
+        setError("高評価・コメントの権限を確認できませんでした。これまでの接続で動画を視聴できます。");
+      if (authError === "denied")
         setError(
           "Googleへの接続がキャンセルされました。設定から再試行できます。",
         );

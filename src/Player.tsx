@@ -10,6 +10,10 @@ import { Icon } from "./Icon";
 import { formatDuration, type Video } from "./model";
 import { canSamplePlaybackPosition, getQueueEditStart, PlaylistTracker, type QueueEditStart } from "./playback";
 import { loadYouTubeApi } from "./youtube";
+import { VideoDescription } from "./VideoDescription";
+import { VideoInteractions, YouTubePrivacyConsent } from "./VideoInteractions";
+import { canSeekToTimestamp, loadedVideoId, observedTimestampPosition } from "./timestamps";
+import type { ServerStatus } from "./useCatalog";
 
 interface Props {
   videos: Video[];
@@ -18,6 +22,10 @@ interface Props {
   resumePlaybackPosition: boolean;
   restartNearEndSeconds?: number;
   active: boolean;
+  youtubeAuth?: ServerStatus | null;
+  interactionRefresh?: number;
+  interactionPolicyAccepted?: boolean;
+  onAcceptInteractionPolicy?: () => void;
   onClose: () => void;
   onPlaybackProgress?: (videoId: string, positionSeconds: number, recordedAt: number, restart?: boolean) => void;
   onPlayingChange?: (playing: boolean) => void;
@@ -45,6 +53,7 @@ export interface PlayerHandle {
   endSession: () => void;
   togglePlayback: () => "playing" | "paused" | null;
   seekBy: (seconds: number) => boolean;
+  seekTo: (videoId: string, seconds: number) => boolean;
 }
 
 // 再生順はセッションで管理し、再生画面の編集操作でだけ更新する。
@@ -55,6 +64,10 @@ export function Player({
   resumePlaybackPosition,
   restartNearEndSeconds = 10,
   active,
+  youtubeAuth,
+  interactionRefresh = 0,
+  interactionPolicyAccepted = false,
+  onAcceptInteractionPolicy,
   onClose,
   onPlaybackProgress,
   onPlayingChange,
@@ -169,6 +182,8 @@ export function Player({
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [complete, setComplete] = useState(false);
+  const [playbackLoad, setPlaybackLoad] = useState<{ videoId: string; serial: number }>();
+  const timestampSample = useRef<number | null>(null);
   // 一時停止や再開をシアターの自動ロック防止へ伝える。
   useEffect(() => {
     onPlayingChange?.(active && playing);
@@ -205,6 +220,8 @@ export function Player({
     displayedVideoId.current = null;
     recordedQueuePositions.current = {};
     setQueueDisplay(null);
+    setPlaybackLoad(undefined);
+    clearTimestampSample();
   }, [active]);
 
   // 緑の行と他の動画の再生位置を、実際に再生する動画が変わったときだけ更新する。
@@ -240,7 +257,7 @@ export function Player({
     const seconds = positionSeconds ?? instance.getCurrentTime();
     const recordedAt = Date.now();
     if (!video || current !== lastPlayingIndex.current ||
-        video.id !== resumeCheckedVideoId.current || loadingEdit.current ||
+        video.id !== resumeCheckedVideoId.current || loadingEdit.current || timestampSample.current !== null ||
         !canSamplePlaybackPosition(
           seconds, recordedAt, sampleAfter.current, pendingRestoreSeconds.current, lastPlaybackSample.current === null,
         ))
@@ -266,6 +283,11 @@ export function Player({
     const sample = { videoId: video.id, positionSeconds: Math.floor(video.durationSeconds), recordedAt: Date.now() };
     lastPlaybackSample.current = sample;
     persistPlaybackSample(sample);
+  }
+
+  function clearTimestampSample() {
+    if (timestampSample.current !== null) window.clearTimeout(timestampSample.current);
+    timestampSample.current = null;
   }
 
   function clearPlaybackWatch() {
@@ -336,6 +358,7 @@ export function Player({
     instance: YT.Player,
     request: { position: number; positionSeconds?: number },
   ) {
+    clearTimestampSample();
     startRequested.current = null;
     explicitStart.current = request;
     resumeCheckedVideoId.current = null;
@@ -422,8 +445,9 @@ export function Player({
       },
       togglePlayback: togglePlayerPlayback,
       seekBy: seekPlayerBy,
+      seekTo: seekToTimestamp,
     }),
-    [ready, complete, error, videos.length],
+    [active, ready, complete, error, videos.length],
   );
 
   useLayoutEffect(() => {
@@ -544,6 +568,8 @@ export function Player({
                 requestedIndex.current = null;
                 setResumeNotice("");
                 if (resumeCheckedVideoId.current !== video.id) {
+                  clearTimestampSample();
+                  setPlaybackLoad((load) => ({ videoId: video.id, serial: (load?.serial ?? 0) + 1 }));
                   const previous = lastPlaybackSample.current;
                   if (previous && previous.videoId !== video.id) persistPlaybackSample(previous);
                   lastPlaybackSample.current = null;
@@ -561,6 +587,7 @@ export function Player({
               const actionIndex = state === 0 ? lastPlayingIndex.current : current;
               if (state === 0 && actionIndex >= 0 &&
                   videosRef.current[actionIndex]?.id === resumeCheckedVideoId.current) {
+                clearTimestampSample();
                 saveCompletedPlayback(actionIndex);
                 resumeCheckedVideoId.current = null;
                 pendingRestoreSeconds.current = null;
@@ -642,6 +669,7 @@ export function Player({
 
     return () => {
       disposed = true;
+      clearTimestampSample();
       clearPlaybackWatch();
       window.clearTimeout(readyTimer);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -695,6 +723,7 @@ export function Player({
       tracker.current = new PlaylistTracker(videosRef.current.length);
       setComplete(false);
     }
+    clearTimestampSample();
     const currentTime = instance.getCurrentTime();
     const duration = instance.getDuration();
     const upperLimit = duration > 0 ? duration : currentTime + seconds;
@@ -704,6 +733,48 @@ export function Player({
     instance.seekTo(nextTime, true);
     samplePlaybackProgress(instance, nextTime);
     setStatus(seconds < 0 ? "10秒戻しました。" : "10秒進めました。");
+    return true;
+  }
+
+  // iframeの応答を観測し、別の動画やシーク前の時刻を保存しない。
+  function seekToTimestamp(videoId: string, seconds: number): boolean {
+    const instance = player.current;
+    if (!active || !instance || !ready || error || loadingEdit.current ||
+        requestedIndex.current !== null || startRequested.current !== null ||
+        instance.getPlaylistIndex() !== lastPlayingIndex.current ||
+        loadedVideoId(instance.getVideoUrl()) !== videoId ||
+        videosRef.current[lastPlayingIndex.current]?.id !== videoId ||
+        !canSeekToTimestamp(seconds, instance.getDuration())) return false;
+    const state = instance.getPlayerState();
+    if (![0, 1, 2, 3].includes(state)) return false;
+
+    clearTimestampSample();
+    if (state === 0) {
+      tracker.current.observe(1, lastPlayingIndex.current);
+      resumeCheckedVideoId.current = videoId;
+      setComplete(false);
+    }
+    pendingRestoreSeconds.current = null;
+    const before = instance.getCurrentTime();
+    const startedAt = Date.now();
+    sampleAfter.current = startedAt + 1000;
+    instance.seekTo(seconds, true);
+
+    const check = () => {
+      timestampSample.current = null;
+      if (player.current !== instance || loadedVideoId(instance.getVideoUrl()) !== videoId ||
+          instance.getPlaylistIndex() !== lastPlayingIndex.current || requestedIndex.current !== null) return;
+      const position = observedTimestampPosition(instance.getCurrentTime(), before, seconds);
+      if (position !== null) {
+        const sample = { videoId, positionSeconds: position, recordedAt: Date.now() };
+        lastPlaybackSample.current = sample;
+        persistPlaybackSample(sample, sample.positionSeconds === 0);
+      } else if (Date.now() - startedAt < 3000) {
+        timestampSample.current = window.setTimeout(check, 100);
+      }
+    };
+    timestampSample.current = window.setTimeout(check, 100);
+    host.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     return true;
   }
 
@@ -736,6 +807,7 @@ export function Player({
     }
     if ((state === 1 || state === 2 || state === 3) && pendingRestoreSeconds.current === null)
       persistCurrentPlayback(instance);
+    clearTimestampSample();
     clearPlaybackWatch();
     requestedIndex.current = null;
     queueReady.current = false;
@@ -872,6 +944,9 @@ export function Player({
       )}
       <h2 className="now-title">{current.title}</h2>
       <p className="muted">{current.channel}</p>
+      {active && youtubeAuth && interactionPolicyAccepted && <VideoInteractions auth={youtubeAuth}
+        video={playbackLoad?.videoId === current.id ? current : null}
+        playbackLoad={playbackLoad?.serial ?? 0} refresh={interactionRefresh} />}
       <div className="player-actions">
         {testMode && (
           <button
@@ -914,6 +989,12 @@ export function Player({
           </button>
         )}
       </div>
+      {active && youtubeAuth && <VideoDescription key={current.id} videoId={current.id}
+        duration={current.durationSeconds} onSeek={seekToTimestamp} consent={
+          !interactionPolicyAccepted && youtubeAuth.csrfToken && onAcceptInteractionPolicy
+            ? <YouTubePrivacyConsent csrf={youtubeAuth.csrfToken} onAccept={onAcceptInteractionPolicy} />
+            : undefined
+        } />}
       <div className="session-queue">
         <h2>再生キュー</h2>
         <p className="muted" hidden>

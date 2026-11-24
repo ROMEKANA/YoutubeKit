@@ -21,8 +21,14 @@ type Name =
   | "next"
   | "pause"
   | "back-10"
-  | "forward-10";
+  | "forward-10"
+  | "chevron-down"
+  | "like"
+  | "comment";
 const paths: Record<Name, string> = {
+  "chevron-down": "m6 9 6 6 6-6",
+  like: "M7 10v10H3V10h4Zm0 9h11a2 2 0 0 0 2-1.6l1.3-6A2 2 0 0 0 19.4 9H15l.6-3.1A2.4 2.4 0 0 0 13.3 3L9 10H7",
+  comment: "M4 5h16v12H9l-5 3V5Z",
   menu: "M4 6h16M4 12h16M4 18h16",
   refresh: "M20 8a8 8 0 1 0 0 8M20 3v5h-5",
   theater: "M4 4h16v12H4V4ZM8 20h8M12 16v4M8 8h8M8 12h5",

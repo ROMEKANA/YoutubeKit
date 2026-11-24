@@ -14,6 +14,7 @@ import {
 
 export type WorkerContext = Context<{ Bindings: Env }>;
 export const youtubeScope = "https://www.googleapis.com/auth/youtube.readonly";
+export const youtubeWriteScope = "https://www.googleapis.com/auth/youtube.force-ssl";
 export const googleServer: oauth.AuthorizationServer = {
   issuer: "https://accounts.google.com",
   authorization_endpoint: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -28,6 +29,12 @@ export interface Session {
   expires_at: number;
   refresh_token_cipher: string | null;
   last_synced_at: number | null;
+  grant_id: string;
+  youtube_write: number;
+  interaction_policy: number;
+  youtube_channel_id: string | null;
+  youtube_channel_title: string | null;
+  youtube_checked_at: number | null;
 }
 
 export const now = () => Math.floor(Date.now() / 1000);
@@ -82,7 +89,7 @@ export async function getSession(c: WorkerContext): Promise<Session | null> {
   const cookie = getCookie(c, cookieName(c.env, "session"));
   if (!cookie || !/^[\w-]{43}$/.test(cookie)) return null;
   const session = await c.env.DB.prepare(
-    `SELECT s.*, a.email, a.refresh_token_cipher, a.last_synced_at
+    `SELECT s.*, a.email, a.refresh_token_cipher, a.last_synced_at, a.grant_id, a.youtube_write, a.interaction_policy, a.youtube_channel_id, a.youtube_channel_title, a.youtube_checked_at
     FROM sessions s JOIN accounts a ON a.sub = s.sub WHERE s.token_hash = ? AND s.expires_at > ?`,
   )
     .bind(await sha256(cookie), now())
@@ -128,6 +135,30 @@ export async function requireSession(
 }
 
 export async function beginLogin(c: WorkerContext): Promise<Response> {
+  return startLogin(c);
+}
+
+export const interactionPolicyVersion = 1;
+
+export async function requireInteractionSession(c: WorkerContext, mutation = false) {
+  const session = await requireSession(c, mutation);
+  requireCondition(session.interaction_policy >= interactionPolicyVersion,
+    "PRIVACY_CONSENT_REQUIRED", "更新したプライバシーポリシーを確認し、同意してください。", 403);
+  return session;
+}
+
+export async function acceptInteractionPolicy(c: WorkerContext) {
+  const session = await requireSession(c, true);
+  await c.env.DB.prepare("UPDATE accounts SET interaction_policy = ? WHERE sub = ?")
+    .bind(interactionPolicyVersion, session.sub).run();
+  return c.json({ accepted: true });
+}
+
+export async function beginYouTubeConsent(c: WorkerContext): Promise<Response> {
+  return startLogin(c, await requireInteractionSession(c, true));
+}
+
+async function startLogin(c: WorkerContext, upgrade?: Session): Promise<Response> {
   requireConfiguration(c.env);
   const state = oauth.generateRandomState();
   const verifier = oauth.generateRandomCodeVerifier();
@@ -139,7 +170,7 @@ export async function beginLogin(c: WorkerContext): Promise<Response> {
     ),
     c.env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now()),
     c.env.DB.prepare(
-      "INSERT INTO oauth_attempts(state_hash, verifier_cipher, nonce, expires_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO oauth_attempts(state_hash, verifier_cipher, nonce, expires_at, upgrade_session, upgrade_grant) VALUES (?, ?, ?, ?, ?, ?)",
     ).bind(
       hash,
       await encryptSecret(
@@ -149,6 +180,8 @@ export async function beginLogin(c: WorkerContext): Promise<Response> {
       ),
       nonce,
       now() + 600,
+      upgrade?.token_hash ?? null,
+      upgrade?.grant_id ?? null,
     ),
   ]);
   setCookie(c, cookieName(c.env, "oauth"), state, cookieOptions(c.env, 600));
@@ -157,7 +190,8 @@ export async function beginLogin(c: WorkerContext): Promise<Response> {
     client_id: c.env.GOOGLE_CLIENT_ID,
     redirect_uri: `${getOrigin(c.env)}/auth/callback`,
     response_type: "code",
-    scope: `openid email ${youtubeScope}`,
+    scope: `openid email ${youtubeScope}${upgrade ? ` ${youtubeWriteScope}` : ""}`,
+    ...(upgrade && { include_granted_scopes: "true", login_hint: upgrade.email }),
     state,
     nonce,
     code_challenge: await oauth.calculatePKCECodeChallenge(verifier),
@@ -165,7 +199,7 @@ export async function beginLogin(c: WorkerContext): Promise<Response> {
     access_type: "offline",
     prompt: "consent select_account",
   }).toString();
-  return c.redirect(url.toString());
+  return upgrade ? c.json({ url: url.toString() }) : c.redirect(url.toString());
 }
 
 // state・PKCE・nonce・署名・issuer・audienceを検証した後だけセッションを発行する。
@@ -181,17 +215,21 @@ export async function finishLogin(c: WorkerContext): Promise<Response> {
   );
   const hash = await sha256(state);
   const attempt = await c.env.DB.prepare(
-    "DELETE FROM oauth_attempts WHERE state_hash = ? AND expires_at > ? RETURNING verifier_cipher, nonce",
+    "DELETE FROM oauth_attempts WHERE state_hash = ? AND expires_at > ? RETURNING verifier_cipher, nonce, upgrade_session, upgrade_grant",
   )
     .bind(hash, now())
-    .first<{ verifier_cipher: string; nonce: string }>();
+    .first<{ verifier_cipher: string; nonce: string; upgrade_session: string | null; upgrade_grant: string | null }>();
   requireCondition(
     attempt,
     "OAUTH_EXPIRED",
     "ログインの有効期限が切れました。もう一度接続してください。",
   );
+  const upgrade = attempt.upgrade_session ? await getSession(c) : null;
+  const consentFailure = () => c.redirect(`${getOrigin(c.env)}/?auth_error=youtube_write`);
+  if (attempt.upgrade_session && (upgrade?.token_hash !== attempt.upgrade_session || upgrade.grant_id !== attempt.upgrade_grant))
+    return consentFailure();
   if (c.req.query("error"))
-    return c.redirect(`${getOrigin(c.env)}/?auth_error=denied`);
+    return upgrade ? consentFailure() : c.redirect(`${getOrigin(c.env)}/?auth_error=denied`);
   const client: oauth.Client = { client_id: c.env.GOOGLE_CLIENT_ID };
   try {
     const parameters = oauth.validateAuthResponse(
@@ -256,12 +294,35 @@ export async function finishLogin(c: WorkerContext): Promise<Response> {
       "このGoogleアカウントは利用を許可されていません。",
       403,
     );
+    const grantedScopes = tokens.scope?.split(" ") ?? [];
     requireCondition(
-      tokens.scope?.split(" ").includes(youtubeScope),
+      grantedScopes.includes(youtubeScope),
       "YOUTUBE_SCOPE_REQUIRED",
       "登録チャンネルを取得する読み取り権限を許可してください。",
       403,
     );
+    if (upgrade) {
+      if (payload.sub !== upgrade.sub || !grantedScopes.includes(youtubeWriteScope) || !upgrade.refresh_token_cipher)
+        return consentFailure();
+
+      // 新規トークンが省略された場合は、既存トークンの更新応答で書き込み権限を確認する。
+      const cipher = tokens.refresh_token
+        ? await encryptSecret(tokens.refresh_token, c.env.TOKEN_ENCRYPTION_KEY, `refresh:${upgrade.sub}`)
+        : upgrade.refresh_token_cipher;
+      const refreshed = await refreshGoogle(c.env, upgrade.sub, cipher);
+      const scopes = refreshed.scope?.split(" ") ?? (tokens.refresh_token ? grantedScopes : []);
+      if (!scopes.includes(youtubeWriteScope) || !scopes.includes(youtubeScope))
+        return consentFailure();
+      const storedCipher = refreshed.refresh_token
+        ? await encryptSecret(refreshed.refresh_token, c.env.TOKEN_ENCRYPTION_KEY, `refresh:${upgrade.sub}`)
+        : cipher;
+      const changed = await c.env.DB.prepare(
+        `UPDATE accounts SET refresh_token_cipher = ?, grant_id = ?, youtube_write = 1,
+          youtube_channel_id = NULL, youtube_channel_title = NULL, youtube_checked_at = NULL
+         WHERE sub = ? AND grant_id = ? AND refresh_token_cipher = ?`,
+      ).bind(storedCipher, randomToken(), upgrade.sub, upgrade.grant_id, upgrade.refresh_token_cipher).run();
+      return changed.meta.changes ? c.redirect(`${getOrigin(c.env)}/`) : consentFailure();
+    }
     const existing = await c.env.DB.prepare(
       "SELECT refresh_token_cipher FROM accounts WHERE sub = ?",
     )
@@ -282,9 +343,12 @@ export async function finishLogin(c: WorkerContext): Promise<Response> {
     const sessionToken = randomToken();
     await c.env.DB.batch([
       c.env.DB.prepare(
-        `INSERT INTO accounts(sub, email, refresh_token_cipher, created_at, last_login_at) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(sub) DO UPDATE SET email = excluded.email, refresh_token_cipher = excluded.refresh_token_cipher, last_login_at = excluded.last_login_at`,
-      ).bind(payload.sub, payload.email, refreshCipher, now(), now()),
+        `INSERT INTO accounts(sub, email, refresh_token_cipher, created_at, last_login_at, grant_id)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(sub) DO UPDATE SET email = excluded.email, last_login_at = excluded.last_login_at${tokens.refresh_token
+           ? ", refresh_token_cipher = excluded.refresh_token_cipher, grant_id = excluded.grant_id, youtube_write = 0, youtube_channel_id = NULL, youtube_channel_title = NULL, youtube_checked_at = NULL"
+           : ""}`,
+      ).bind(payload.sub, payload.email, refreshCipher, now(), now(), randomToken()),
       c.env.DB.prepare("DELETE FROM sync_jobs WHERE sub = ?").bind(payload.sub),
       c.env.DB.prepare(
         "INSERT INTO sessions(token_hash, sub, csrf_token, expires_at) VALUES (?, ?, ?, ?)",
@@ -303,6 +367,7 @@ export async function finishLogin(c: WorkerContext): Promise<Response> {
     );
     return c.redirect(`${getOrigin(c.env)}/`);
   } catch (error) {
+    if (upgrade) return consentFailure();
     if (error instanceof AppError) throw error;
     throw new AppError(
       "OAUTH_FAILED",
@@ -312,7 +377,24 @@ export async function finishLogin(c: WorkerContext): Promise<Response> {
   }
 }
 
-export async function accessToken(env: Env, session: Session): Promise<string> {
+async function refreshGoogle(env: Env, sub: string, cipher: string) {
+  const client: oauth.Client = { client_id: env.GOOGLE_CLIENT_ID };
+  const refresh = await decryptSecret(cipher, env.TOKEN_ENCRYPTION_KEY, `refresh:${sub}`);
+  const response = await oauth.refreshTokenGrantRequest(
+    googleServer, client, oauth.ClientSecretPost(env.GOOGLE_CLIENT_SECRET),
+    refresh, { [oauth.customFetch]: timedFetch },
+  );
+  return oauth.processRefreshTokenResponse(googleServer, client, response);
+}
+
+export type YouTubeGrant = Pick<Session, "sub" | "refresh_token_cipher" | "grant_id" | "youtube_write">;
+
+export async function accessToken(env: Env, session: YouTubeGrant): Promise<string> {
+  return (await youtubeAccess(env, session)).token;
+}
+
+// トークンの更新・失効は、読み出した認可世代と暗号文が現在も一致する場合に限る。
+export async function youtubeAccess(env: Env, session: YouTubeGrant) {
   requireCondition(
     session.refresh_token_cipher,
     "RECONNECT_REQUIRED",
@@ -320,47 +402,30 @@ export async function accessToken(env: Env, session: Session): Promise<string> {
     401,
   );
   try {
-    const client: oauth.Client = { client_id: env.GOOGLE_CLIENT_ID };
-    const refresh = await decryptSecret(
-      session.refresh_token_cipher,
-      env.TOKEN_ENCRYPTION_KEY,
-      `refresh:${session.sub}`,
-    );
-    const response = await oauth.refreshTokenGrantRequest(
-      googleServer,
-      client,
-      oauth.ClientSecretPost(env.GOOGLE_CLIENT_SECRET),
-      refresh,
-      { [oauth.customFetch]: timedFetch },
-    );
-    const tokens = await oauth.processRefreshTokenResponse(
-      googleServer,
-      client,
-      response,
-    );
-    if (tokens.refresh_token)
+    const tokens = await refreshGoogle(env, session.sub, session.refresh_token_cipher);
+    const canWrite = !!session.youtube_write &&
+      (tokens.scope === undefined || tokens.scope.split(" ").includes(youtubeWriteScope));
+    if (tokens.refresh_token || canWrite !== !!session.youtube_write)
       await env.DB.prepare(
-        "UPDATE accounts SET refresh_token_cipher = ? WHERE sub = ?",
-      )
-        .bind(
-          await encryptSecret(
-            tokens.refresh_token,
-            env.TOKEN_ENCRYPTION_KEY,
-            `refresh:${session.sub}`,
-          ),
-          session.sub,
-        )
-        .run();
-    return tokens.access_token;
+        "UPDATE accounts SET refresh_token_cipher = ?, youtube_write = ? WHERE sub = ? AND grant_id = ? AND refresh_token_cipher = ?",
+      ).bind(
+        tokens.refresh_token
+          ? await encryptSecret(tokens.refresh_token, env.TOKEN_ENCRYPTION_KEY, `refresh:${session.sub}`)
+          : session.refresh_token_cipher,
+        Number(canWrite), session.sub, session.grant_id, session.refresh_token_cipher,
+      ).run();
+    return { token: tokens.access_token, canWrite };
   } catch (error) {
     if (
       error instanceof oauth.ResponseBodyError &&
       error.error === "invalid_grant"
     ) {
       await env.DB.prepare(
-        "UPDATE accounts SET refresh_token_cipher = NULL WHERE sub = ?",
+        `UPDATE accounts SET refresh_token_cipher = NULL, youtube_write = 0,
+          youtube_channel_id = NULL, youtube_channel_title = NULL, youtube_checked_at = NULL
+         WHERE sub = ? AND grant_id = ? AND refresh_token_cipher = ?`,
       )
-        .bind(session.sub)
+        .bind(session.sub, session.grant_id, session.refresh_token_cipher)
         .run();
       throw new AppError(
         "RECONNECT_REQUIRED",

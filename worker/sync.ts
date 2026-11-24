@@ -412,7 +412,7 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
         ),
       ];
       const details = (
-        await Promise.all(chunks(detailIds, 50).map((ids) => api.videos(ids)))
+        await Promise.all(chunks(detailIds, 50).map((ids) => api.videos(ids, session.interaction_policy > 0)))
       ).flat();
 
       for (const result of accepted) {
@@ -557,7 +557,7 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
                   : state.cutoff;
             const recent = selectRecentUploads(page.items, cutoff);
             saveVideos(
-              (await api.videos(recent.ids)).filter(
+              (await api.videos(recent.ids, session.interaction_policy > 0)).filter(
                 (video) => video.channelId === id,
               ),
             );
@@ -636,7 +636,7 @@ export async function stepSync(c: WorkerContext): Promise<Response> {
             .all<{ video_id: string }>()
         : { results: [] };
       const ids = stale.results.map((video) => video.video_id);
-      const refreshed = await api.videos(ids);
+      const refreshed = await api.videos(ids, session.interaction_policy > 0);
       saveVideos(refreshed);
       for (const id of ids.filter(
         (id) => !refreshed.some((video) => video.id === id),

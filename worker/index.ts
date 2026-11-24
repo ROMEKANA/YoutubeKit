@@ -2,6 +2,9 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import {
   beginLogin,
+  beginYouTubeConsent,
+  acceptInteractionPolicy,
+  interactionPolicyVersion,
   disconnect,
   finishLogin,
   getSession,
@@ -12,6 +15,8 @@ import { AppError } from "./errors";
 import { getCatalog, getChannelVideoOrder, getSavedVideos, startSync, stepSync } from "./sync";
 import { loadHistory } from "./history";
 import { cleanup } from "./cleanup";
+import { commentRequestBytes } from "../shared/interactions";
+import { getDescription, getInteractions, setRating, getComment, changeComment } from "./interactions";
 import { readCloud, writeCloud, saveBackup, readBackups } from "./cloud";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -27,7 +32,8 @@ app.use("*", async (c, next) => {
 app.use(
   "/api/*",
   async (c, next) => bodyLimit({
-    maxSize: c.req.path.startsWith("/api/cloud/") ? 1024 * 1024 : 1024,
+    maxSize: c.req.path.startsWith("/api/cloud/") ? 1024 * 1024 :
+      c.req.method === "POST" && /^\/api\/videos\/[\w-]{11}\/comment$/.test(c.req.path) ? commentRequestBytes : 1024,
     onError: (c) =>
       c.json(
         { error: "リクエストが大きすぎます。", code: "REQUEST_TOO_LARGE" },
@@ -54,14 +60,28 @@ app.get("/api/status", async (c) => {
       account: { sub: session.sub, email: session.email },
       csrfToken: session.csrf_token,
       connected: !!session.refresh_token_cipher,
+      youtube: {
+        policyAccepted: session.interaction_policy >= interactionPolicyVersion,
+        canWrite: !!session.refresh_token_cipher && !!session.youtube_write,
+        channel: session.youtube_channel_id && session.youtube_checked_at && session.youtube_checked_at > Date.now() / 1000 - 29 * 86400
+          ? { id: session.youtube_channel_id, title: session.youtube_channel_title, checkedAt: session.youtube_checked_at }
+          : null,
+      },
     }),
   });
 });
 app.get("/auth/login", beginLogin);
+app.post("/api/youtube/privacy", acceptInteractionPolicy);
+app.post("/api/youtube/consent", beginYouTubeConsent);
 app.get("/auth/callback", finishLogin);
 app.post("/api/logout", logout);
 app.post("/api/disconnect", disconnect);
 app.get("/api/catalog", getCatalog);
+app.get("/api/videos/:id/description", getDescription);
+app.get("/api/videos/:id/interactions", getInteractions);
+app.post("/api/videos/:id/rating", setRating);
+app.get("/api/videos/:id/comment", getComment);
+app.post("/api/videos/:id/comment", changeComment);
 app.get("/api/channel-video-order", getChannelVideoOrder);
 app.get("/api/cloud/state", readCloud);
 app.post("/api/cloud/state", writeCloud);

@@ -2,7 +2,7 @@
 
 観たい動画を選び、選んだ分だけ再生する、個人用YouTubeキューアプリです。
 
-**v1.2.24** / [公開アプリ](https://youtube-kit.tokana2212.workers.dev/) / [スマホでの使い方](docs/スマホでの使い方.md)
+**v2.0.0** / [公開アプリ](https://youtube-kit.tokana2212.workers.dev/) / [スマホでの使い方](docs/スマホでの使い方.md)
 
 横画面の映像ずれを調べる場合は、設定の「表示ずれの比較画面」または [表示比較](https://youtube-kit.tokana2212.workers.dev/?lab=layout) を使います。条件・手順・結果の読み方は [表示ずれの実機切り分け](docs/表示ずれの実機切り分け.md) を参照してください。
 
@@ -39,6 +39,8 @@
 
 設定の「クラウド保存と同期」で、自動同期全体のオン・オフ、再生位置の定期送信（初期30秒）、他ブラウザの定期確認（初期60秒）を変更できます。間隔はオフ・15・30・60・120・300・600秒です。同期設定・表示密度・シアターの明るさはブラウザ専用です。手動同期・別ブラウザのキュー引き継ぎ・バックアップ復元もここから行います。詳細は[クラウド同期の設計と使い方](docs/クラウド同期.md)を参照してください。
 
+再生画面の「概要欄」から全文を開き、青い時刻を押すと動画内を移動できます。更新したプライバシーポリシーへの同意後、高評価状態を表示します。YouTubeへの高評価・コメント操作には追加のGoogle同意が必要です。コメントは、YouTubeKitから投稿したトップレベルコメントを1動画につき1件管理します。[スマホでの操作と復旧方法](docs/スマホでの使い方.md#概要欄高評価コメント)
+
 ## 自分用の環境を作る
 
 **1つの配備につき利用者は1人です。** この公開アプリには所有者のアカウント制限があります。他の人が使う場合は、ソースを自分のフォルダへ用意し、各自のGoogle Cloud・Cloudflare・D1で配備してください。複数人が同じURLへ自由に登録するサービスではありません。
@@ -62,7 +64,7 @@ npm.cmd run secrets:init
 2. 新しいPersonalプロジェクトを選び、**ウェブ アプリケーション** のOAuthクライアントを作成します。ローカルで使う場合は承認済みリダイレクトURIへ `http://127.0.0.1:5173/auth/callback` を登録します。公開用には公開URLに `/auth/callback` を付けたURIも登録します。
 3. 作成したプロジェクトで [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) を有効にし、OAuthクライアントの認証情報を安全な場所に保存します。
 
-YouTubeKitは `openid`、`email`、`https://www.googleapis.com/auth/youtube.readonly` を要求します。別のYouTube APIキーは不要です。Personal モードではTestingの7日間の認可期限と未確認アプリの警告が適用されません。 [Google の説明](https://support.google.com/cloud/answer/15544987#personal-mode)
+YouTubeKitはGoogle接続時に `openid`、`email`、`https://www.googleapis.com/auth/youtube.readonly` を要求します。設定で「高評価・コメントを許可」を選ぶと `https://www.googleapis.com/auth/youtube.force-ssl` の追加同意へ進みます。別のYouTube APIキーは不要です。Personal モードではTestingの7日間の認可期限と未確認アプリの警告が適用されません。 [Google の説明](https://support.google.com/cloud/answer/15544987#personal-mode)
 
 `.dev.vars` を手元のエディターで編集します。
 

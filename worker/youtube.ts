@@ -1,5 +1,6 @@
 import { timedFetch } from "./auth";
 import { AppError, requireCondition } from "./errors";
+import type { Rating } from "../shared/interactions";
 
 export interface ChannelData {
   id: string;
@@ -16,6 +17,7 @@ export interface VideoData {
   durationSeconds: number;
   embeddable: boolean;
   availability: string;
+  description: string | null;
 }
 
 export function record(value: unknown): Record<string, unknown> {
@@ -103,6 +105,28 @@ async function limitedJson(response: Response): Promise<unknown> {
   }
 }
 
+type Endpoint = "subscriptions" | "channels" | "playlistItems" | "videos" | "videos/getRating" | "videos/rate" | "commentThreads" | "comments";
+
+export class YouTubeRejected extends AppError {}
+
+export interface YouTubeComment {
+  id: string;
+  videoId: string;
+  authorId: string;
+  body: string;
+}
+
+function parseComment(value: unknown): YouTubeComment {
+  const raw = record(value);
+  const snippet = record(raw.snippet);
+  return {
+    id: text(raw.id),
+    videoId: text(snippet.videoId),
+    authorId: text(record(snippet.authorChannelId).value),
+    body: typeof snippet.textOriginal === "string" ? snippet.textOriginal : "",
+  };
+}
+
 // 認証付き公式APIの必要な項目だけ取得する。search.listは使わない。
 export class YouTubeClient {
   constructor(
@@ -110,28 +134,36 @@ export class YouTubeClient {
     private readonly request: typeof fetch = timedFetch,
   ) {}
 
-  private async list(
-    endpoint: "subscriptions" | "channels" | "playlistItems" | "videos",
+  private async send(
+    endpoint: Endpoint,
     parameters: Record<string, string>,
+    method = "GET",
+    payload?: object,
   ) {
     const url = new URL(`https://www.googleapis.com/youtube/v3/${endpoint}`);
     url.search = new URLSearchParams(parameters).toString();
     let response: Response;
     try {
       response = await this.request(url, {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
+        method,
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          ...(payload && { "Content-Type": "application/json" }),
+        },
+        body: payload && JSON.stringify(payload),
       });
     } catch {
       throw new AppError(
         "YOUTUBE_UNAVAILABLE",
-        "YouTubeに接続できません。取得済み一覧は保持されています。",
+        "YouTubeに接続できません。時間をおいて状態を確認してください。",
         502,
       );
     }
+    if (response.status === 204) return {};
     // JSONでない障害応答でも、認証切れや利用上限をチャンネル固有の失敗にしない。
     if (response.status === 401 || response.status === 429) {
       await response.body?.cancel();
-      throw new AppError(
+      throw new YouTubeRejected(
         response.status === 401 ? "RECONNECT_REQUIRED" : "YOUTUBE_QUOTA",
         response.status === 401
           ? "YouTubeの認証期限が切れました。Googleへ再接続してください。"
@@ -156,27 +188,35 @@ export class YouTubeClient {
       const reasons = Array.isArray(error.errors)
         ? error.errors.map((entry) => text(record(entry).reason))
         : [];
+      const Failure = response.status >= 400 && response.status < 500 &&
+        response.status !== 408 && !reasons.includes("processingFailure") && reasons.some(Boolean) ? YouTubeRejected : AppError;
+      if (reasons.includes("commentNotFound"))
+        throw new Failure("COMMENT_GONE", "対象のコメントがYouTubeで見つかりません。", 404);
+      if (reasons.includes("commentsDisabled"))
+        throw new Failure("COMMENTS_DISABLED", "この動画ではコメントを投稿できません。", 403);
+      if (reasons.includes("videoNotFound") && ["comments", "commentThreads", "videos/rate", "videos/getRating"].includes(endpoint))
+        throw new Failure("VIDEO_GONE", "対象の動画がYouTubeで見つかりません。", 404);
       if (
         reasons.includes("quotaExceeded") ||
         reasons.includes("dailyLimitExceeded") ||
         reasons.includes("rateLimitExceeded") ||
         reasons.includes("userRateLimitExceeded")
       )
-        throw new AppError(
+        throw new Failure(
           "YOUTUBE_QUOTA",
           "YouTube APIの利用上限に達しました。時間をおいて再試行してください。",
           429,
         );
       if (reasons.includes("accessNotConfigured"))
-        throw new AppError(
+        throw new Failure(
           "YOUTUBE_API_DISABLED",
           "Google CloudでYouTube Data API v3を有効にしてください。",
           503,
         );
       if (reasons.includes("insufficientPermissions"))
-        throw new AppError(
+        throw new Failure(
           "YOUTUBE_PERMISSION",
-          `登録チャンネルの読み取り権限が必要です。再接続してください。`,
+          "この操作に必要なYouTube権限がありません。Google接続を確認してください。",
           403,
         );
       // APIの生の本文は返さず、既知の理由とHTTP番号だけを診断に使う。
@@ -194,20 +234,27 @@ export class YouTubeClient {
       const reason = reasons.find((value) =>
         Object.hasOwn(descriptions, value),
       );
+      if (response.status === 403 && ["comments", "commentThreads", "videos/rate", "videos/getRating"].includes(endpoint))
+        throw new Failure("YOUTUBE_FORBIDDEN", "この動画やコメントへの操作がYouTubeで許可されていません。", 403);
       if (reason || response.status === 404 || response.status >= 500)
-        throw new AppError(
+        throw new Failure(
           reason === "invalidPageToken"
             ? "YOUTUBE_PAGE_EXPIRED"
             : "YOUTUBE_ITEM_FAILED",
           `${reason ? descriptions[reason] : "対象の取得に失敗しました"}（HTTP ${response.status}${reason ? ` / ${reason}` : ""}）。`,
           502,
         );
-      throw new AppError(
+      throw new Failure(
         "YOUTUBE_REQUEST_FAILED",
-        `YouTubeから情報を取得できませんでした（HTTP ${response.status}）。取得済み一覧は保持されています。`,
+        `YouTubeで処理できませんでした（HTTP ${response.status}）。`,
         502,
       );
     }
+    return body;
+  }
+
+  private async list(endpoint: Endpoint, parameters: Record<string, string>) {
+    const body = await this.send(endpoint, parameters);
     requireCondition(
       Array.isArray(body.items),
       "YOUTUBE_RESPONSE",
@@ -224,6 +271,65 @@ export class YouTubeClient {
       items: body.items as unknown[],
       nextPageToken: text(body.nextPageToken),
     };
+  }
+
+  async ownChannel() {
+    const page = await this.list("channels", {
+      part: "snippet", mine: "true", maxResults: "2",
+      fields: "nextPageToken,items(id,snippet/title)",
+    });
+    const item = record(page.items[0]);
+    const id = text(item.id);
+    const title = text(record(item.snippet).title);
+    return page.items.length === 1 && !page.nextPageToken && /^UC[\w-]{22}$/.test(id) && title
+      ? { id, title }
+      : null;
+  }
+
+  async rating(videoId: string): Promise<Rating> {
+    const page = await this.list("videos/getRating", { id: videoId });
+    const item = page.items.map(record).find((entry) => entry.videoId === videoId);
+    const rating = item?.rating;
+    requireCondition(rating === "like" || rating === "dislike" || rating === "none",
+      "RATING_UNAVAILABLE", "この動画の高評価状態を確認できませんでした。", 502);
+    return rating;
+  }
+
+  async rate(videoId: string, rating: "like" | "none") {
+    await this.send("videos/rate", { id: videoId, rating }, "POST");
+  }
+
+  async comments(ids: string[]) {
+    const page = await this.list("comments", {
+      part: "snippet", id: ids.join(","), textFormat: "plainText",
+      fields: "items(id,snippet(videoId,authorChannelId/value,textOriginal))",
+    });
+    return page.items.map(parseComment).filter((comment) => ids.includes(comment.id));
+  }
+
+  async videoChannel(videoId: string) {
+    const page = await this.list("videos", {
+      part: "snippet", id: videoId, fields: "items(id,snippet/channelId)",
+    });
+    const video = page.items.map(record).find((item) => item.id === videoId);
+    const id = text(record(video?.snippet).channelId);
+    requireCondition(/^UC[\w-]{22}$/.test(id), "VIDEO_GONE", "動画のチャンネル情報を取得できません。", 404);
+    return id;
+  }
+
+  async insertComment(videoId: string, channelId: string, body: string) {
+    const result = await this.send("commentThreads", { part: "snippet" }, "POST", {
+      snippet: { videoId, channelId, topLevelComment: { snippet: { textOriginal: body } } },
+    });
+    return parseComment(record(result.snippet).topLevelComment);
+  }
+
+  async updateComment(id: string, body: string) {
+    await this.send("comments", { part: "snippet" }, "PUT", { id, snippet: { textOriginal: body } });
+  }
+
+  async deleteComment(id: string) {
+    await this.send("comments", { id }, "DELETE");
   }
 
   async subscriptions(pageToken = "") {
@@ -294,14 +400,14 @@ export class YouTubeClient {
     return { items, nextPageToken: page.nextPageToken };
   }
 
-  async videos(ids: string[]): Promise<VideoData[]> {
+  async videos(ids: string[], includeDescription = true): Promise<VideoData[]> {
     if (!ids.length) return [];
     const page = await this.list("videos", {
       part: "snippet,contentDetails,status",
       id: ids.join(","),
       maxResults: "50",
       fields:
-        "items(id,snippet(channelId,title,publishedAt,thumbnails,liveBroadcastContent),contentDetails/duration,status(embeddable,privacyStatus))",
+        `items(id,snippet(channelId,title,publishedAt,thumbnails(default/url,medium/url),liveBroadcastContent${includeDescription ? ",description" : ""}),contentDetails/duration,status(embeddable,privacyStatus))`,
     });
     return page.items
       .map((item) => {
@@ -318,6 +424,7 @@ export class YouTubeClient {
             record(value.contentDetails).duration,
           ),
           embeddable: status.embeddable === true,
+          description: includeDescription ? (typeof snippet.description === "string" ? snippet.description : "") : null,
           availability:
             snippet.liveBroadcastContent === "upcoming"
               ? "upcoming"

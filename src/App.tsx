@@ -4,7 +4,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
 import { version as appVersion } from "../package.json";
@@ -32,6 +31,8 @@ import {
   type Video,
 } from "./model";
 import { Icon } from "./Icon";
+import { Modal } from "./Modal";
+import { YouTubeConsent, YouTubePrivacyConsent } from "./VideoInteractions";
 import { Player, type PlayerHandle } from "./Player";
 import { TheaterControls } from "./TheaterControls";
 import { addLatestChannelTimes, readLatestChannelTimes, readSavedVideos, useCatalog, type CatalogController } from "./useCatalog";
@@ -50,45 +51,6 @@ const channelSortOptions: { key: ChannelSort; label: string }[] = [
   { key: "watched", label: "最近視聴した" },
 ];
 const durationLabel = (seconds: number) => seconds < 3600 ? `${seconds / 60}分` : `${seconds / 3600}時間`;
-
-// native dialogでフォーカス移動とEscapeによる閉じる操作を提供する。
-function Modal({
-  title,
-  onClose,
-  children,
-  drawer = false,
-}: {
-  title: string;
-  onClose: () => void;
-  children: ReactNode;
-  drawer?: boolean;
-}) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    ref.current?.showModal();
-  }, []);
-  return (
-    <dialog
-      ref={ref}
-      className={drawer ? "modal drawer" : "modal"}
-      aria-label={title}
-      onCancel={onClose}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div className="modal-inner">
-        <div className="modal-header">
-          <h2>{title}</h2>
-          <button className="icon-button" aria-label="閉じる" onClick={onClose}>
-            <Icon name="close" />
-          </button>
-        </div>
-        {children}
-      </div>
-    </dialog>
-  );
-}
 
 // 画像をタップして選択を切り替え、選択中は現在の再生順を表示する。
 function Thumbnail({
@@ -255,6 +217,10 @@ function CatalogApp({
   const [foreground, setForeground] = useState<{ leftAt: number; openedAt: number } | null>(null);
   const autoRefreshHandled = useRef<typeof foreground>(null);
   const headerRefresh = useRef(false);
+  const [privacyAcceptedHere, setPrivacyAcceptedHere] = useState(false);
+  const interactionPolicyAccepted = privacyAcceptedHere || !!catalog.auth?.youtube?.policyAccepted;
+  const acceptInteractionPolicy = () => setPrivacyAcceptedHere(true);
+  const [interactionRefresh, setInteractionRefresh] = useState(0);
   const cloud = useCloud(stateKey, saved, setSaved, catalog.auth?.authenticated ? catalog.auth.csrfToken : undefined, !!session);
   const knownVideos = useRef(new Map<string, Video>());
   for (const video of catalog.queueVideos)
@@ -872,6 +838,10 @@ function CatalogApp({
           <Player
             ref={playerHandle}
             active={!!session}
+            youtubeAuth={catalog.auth?.authenticated ? catalog.auth : null}
+            interactionRefresh={interactionRefresh}
+            interactionPolicyAccepted={interactionPolicyAccepted}
+            onAcceptInteractionPolicy={acceptInteractionPolicy}
             videos={session?.videos ?? singleQueue ?? playableQueue}
             onQueueEdit={session && !session.single ? (videos) => {
               const queue = videos.map((video) => video.id);
@@ -1600,7 +1570,7 @@ function CatalogApp({
                 </select>
               </label>
               <p className="panel-note">同期設定はこのブラウザ専用です。ローカルの再生位置保存間隔とは別です。定期確認がオフでも起動・復帰・変更の送信時に同期します。</p>
-              <button className="secondary" disabled={!cloud.ready || cloud.busy} onClick={() => void cloud.sync()}>今すぐ同期</button>
+              <button className="secondary" disabled={!cloud.ready || cloud.busy} onClick={() => void cloud.sync().finally(() => setInteractionRefresh((value) => value + 1))}>今すぐ同期</button>
               <button className="text-button" disabled={!!session || cloud.busy} onClick={cloud.inheritQueue}>別ブラウザのキューを引き継ぐ</button>
               <details>
                 <summary onClick={() => void cloud.listBackups()}>バックアップから復元</summary>
@@ -1819,6 +1789,11 @@ function CatalogApp({
                   : "未接続"}
             </span>
             <h3>{catalog.auth?.account?.email ?? "Googleアカウント未接続"}</h3>
+            {catalog.auth?.connected && catalog.auth.csrfToken && (!interactionPolicyAccepted
+              ? <YouTubePrivacyConsent csrf={catalog.auth.csrfToken} onAccept={acceptInteractionPolicy} />
+              : catalog.auth.youtube?.canWrite
+              ? <p className="panel-note">YouTubeの高評価・コメントを許可済み{catalog.auth.youtube.channel && `（${catalog.auth.youtube.channel.title}）`}</p>
+              : <YouTubeConsent csrf={catalog.auth.csrfToken} />)}
             <p hidden={!!catalog.auth?.authenticated}>
               {catalog.auth?.authenticated
                 ? "保存キュー・非表示・共通設定・再生位置はクラウドへ同期できます。現在のキューはブラウザごとに保存します。"

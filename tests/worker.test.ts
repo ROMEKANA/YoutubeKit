@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, beforeEach, describe, it, expect } from "vitest";
+import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from "vitest";
 import {
   Miniflare,
   Response as MockResponse,
@@ -22,6 +22,20 @@ const channelA = `UC${"a".repeat(22)}`;
 const channelB = `UC${"b".repeat(22)}`;
 const videoIds = ["aqz-KE-bpKQ", "eRsGyueVLvQ", "R6MlUcmOul8"];
 const youtubeScope = "https://www.googleapis.com/auth/youtube.readonly";
+const writeScope = "https://www.googleapis.com/auth/youtube.force-ssl";
+let codeScope = "";
+let codeRefresh = true;
+let refreshedScope: string | undefined;
+let invalidGrant = false;
+let holdRating: (() => Promise<void>) | undefined;
+let holdRefresh: (() => Promise<void>) | undefined;
+let actionChannel = channelA;
+let rating: "like" | "none" | "dislike" = "none";
+let ratingFailure = false;
+let commentFailure: "disabled" | "unknown" | null = null;
+let commentMissing = false;
+let commentWrites = 0;
+let comment: { id: string; snippet: { videoId: string; authorChannelId: { value: string }; textOriginal: string } } | null = null;
 const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
   "base64",
 );
@@ -128,16 +142,24 @@ async function upstream(request: Request) {
       expect(form.get("redirect_uri")).toBe(`${origin}/auth/callback`);
       return json({
         access_token: "test-access",
-        refresh_token: "test-refresh",
+        ...(codeRefresh && { refresh_token: "test-refresh" }),
         id_token: corruptSignature
           ? `${idToken.slice(0, idToken.lastIndexOf(".") + 1)}invalid-signature`
           : idToken,
         token_type: "Bearer",
         expires_in: 3600,
-        scope: `openid email ${youtubeScope}`,
+        scope: codeScope || `openid email ${youtubeScope}`,
       });
     }
+    const reject = invalidGrant;
+    if (holdRefresh) {
+      const wait = holdRefresh;
+      holdRefresh = undefined;
+      await wait();
+    }
+    if (reject) return json({ error: "invalid_grant" }, 400);
     return json({
+      scope: refreshedScope,
       access_token: "test-access",
       token_type: "Bearer",
       expires_in: 3600,
@@ -161,6 +183,52 @@ async function upstream(request: Request) {
         },
       ],
     });
+  }
+  if (url.pathname === "/youtube/v3/channels" && url.searchParams.get("mine")) {
+    return json({ items: actionChannel ? [{ id: actionChannel, snippet: { title: "本人チャンネル" } }] : [] });
+  }
+  if (url.pathname === "/youtube/v3/videos/getRating") {
+    if (ratingFailure) return json({ error: {} }, 503);
+    const snapshot = rating;
+    if (holdRating) {
+      const wait = holdRating;
+      holdRating = undefined;
+      await wait();
+    }
+    return json({ items: [{ videoId: url.searchParams.get("id"), rating: snapshot }] });
+  }
+  if (url.pathname === "/youtube/v3/videos/rate") {
+    expect(request.method).toBe("POST");
+    rating = url.searchParams.get("rating") === "like" ? "like" : "none";
+    return new MockResponse(null, { status: 204 });
+  }
+  if (url.pathname === "/youtube/v3/commentThreads") {
+    expect(request.method).toBe("POST");
+    commentWrites++;
+    if (commentFailure === "disabled") return json({ error: { errors: [{ reason: "commentsDisabled" }] } }, 403);
+    if (commentFailure === "unknown") return json({ error: {} }, 503);
+    const data = await request.json() as { snippet: { channelId: string; videoId: string; topLevelComment: { snippet: { textOriginal: string } } } };
+    expect(data.snippet.channelId).toBe(channelA);
+    comment = { id: "top-comment", snippet: {
+      videoId: data.snippet.videoId, authorChannelId: { value: actionChannel },
+      textOriginal: data.snippet.topLevelComment.snippet.textOriginal,
+    } };
+    return json({ id: "thread-id", snippet: { topLevelComment: comment } });
+  }
+  if (url.pathname === "/youtube/v3/comments") {
+    if (request.method === "PUT") {
+      const data = await request.json() as { id: string; snippet: { textOriginal: string } };
+      expect(data.id).toBe(comment?.id);
+      comment!.snippet.textOriginal = data.snippet.textOriginal;
+      return json(comment);
+    }
+    expect(url.searchParams.get("id")).toBe("top-comment");
+    if (request.method === "DELETE") {
+      comment = null;
+      return new MockResponse(null, { status: 204 });
+    }
+    if (commentMissing) return json({ error: { errors: [{ reason: "commentNotFound" }] } }, 404);
+    return json({ items: comment ? [comment] : [] });
   }
   if (url.pathname === "/youtube/v3/channels")
     return json({
@@ -232,6 +300,7 @@ async function upstream(request: Request) {
         snippet: {
           channelId: channelA,
           title: `動画 ${id}`,
+          ...(url.searchParams.get("fields")?.includes("description") && { description: id === videoIds[0] ? "冒頭\n５：１７説明" : "" }),
           publishedAt: published(
             id === videoIds[0]
               ? 60
@@ -265,6 +334,7 @@ function options(script: string): MiniflareOptions {
   };
   return {
     cf: false,
+    enableDevRegistry: false,
     telemetry: { enabled: false },
     workers: [
       {
@@ -369,6 +439,262 @@ async function authenticated() {
   csrf = data.csrfToken;
 }
 
+async function runConsent({
+  noRefresh = false, refused = false, grantWrite = true, refreshScope = writeScope, callbackSub = sub,
+} = {}) {
+  const begin = await post("/api/youtube/consent");
+  expect(begin.status, await begin.clone().text()).toBe(200);
+  const target = new URL((await begin.json<{ url: string }>()).url);
+  expect(target.searchParams.get("scope")).toContain(writeScope);
+  expect(target.searchParams.get("include_granted_scopes")).toBe("true");
+  idToken = await new SignJWT({
+    nonce: target.searchParams.get("nonce"), email: "owner@example.net", email_verified: true,
+  }).setProtectedHeader({ alg: "RS256", kid: "test-key" }).setSubject(callbackSub).setAudience("test-client")
+    .setIssuer("https://accounts.google.com").setIssuedAt().setExpirationTime("10m").sign(pair.privateKey);
+  codeRefresh = !noRefresh;
+  codeScope = `openid email ${youtubeScope}${grantWrite ? ` ${writeScope}` : ""}`;
+  refreshedScope = refreshScope === writeScope ? `${youtubeScope} ${writeScope}` : refreshScope;
+  const result = await mf.dispatchFetch(
+    `${origin}/auth/callback?${refused ? "error=access_denied" : "code=test-code"}&state=${target.searchParams.get("state")}`, {
+      redirect: "manual", headers: { Cookie: `${sessionCookie}; ${cookie(begin, "__Host-yk_oauth=")}` },
+    });
+  expect(result.status).toBe(302);
+  return result.headers.get("Location");
+}
+
+const apiGet = (path: string) => mf.dispatchFetch(`${origin}${path}`, { headers: { Cookie: sessionCookie } });
+const videoPath = `/api/videos/${videoIds[0]}`;
+const operation = () => `${seconds()}.${crypto.randomUUID()}`;
+
+async function accepted(writeAccess = false) {
+  await authenticated();
+  expect((await post("/api/youtube/privacy")).status).toBe(200);
+  if (writeAccess) expect(await runConsent()).toBe(`${origin}/`);
+}
+
+describe("概要欄・高評価・コメント（Workers + D1）", () => {
+  it("同意前は概要欄を取得せず、移行済みのNULLから遅延取得し一覧には本文を含めない", async () => {
+    await authenticated();
+    await runSync();
+    expect((await apiGet(`${videoPath}/description`)).status).toBe(403);
+    expect(await db.prepare("SELECT description FROM videos WHERE video_id = ?").bind(videoIds[0]).first("description")).toBeNull();
+    expect(seen.some((path) => path.includes("description"))).toBe(false);
+    expect((await post("/api/youtube/privacy")).status).toBe(200);
+    expect(await (await apiGet(`${videoPath}/description`)).json()).toEqual({ description: "冒頭\n５：１７説明" });
+    expect(await (await apiGet(`/api/videos/${videoIds[1]}/description`)).json()).toEqual({ description: "" });
+    seen = [];
+    expect((await apiGet(`/api/videos/${videoIds[1]}/description`)).status).toBe(200);
+    expect(seen).toEqual([]);
+    expect(await (await apiGet("/api/catalog")).text()).not.toContain("５：１７説明");
+    quotaFailure = true;
+    expect((await apiGet(`/api/videos/${videoIds[2]}/description`)).status).toBe(429);
+  });
+
+  it("追加同意の拒否、別のアカウント、権限不足、継続トークン未確認でも読み取り接続を維持する", async () => {
+    await accepted();
+    const initial = await db.prepare("SELECT refresh_token_cipher FROM accounts").first("refresh_token_cipher");
+    for (const option of [{ refused: true }, { grantWrite: false }, { callbackSub: "another-user" },
+      { noRefresh: true, refreshScope: youtubeScope }, { noRefresh: true, refreshScope: "" }]) {
+      expect(await runConsent(option)).toContain("auth_error=youtube_write");
+      expect(await db.prepare("SELECT refresh_token_cipher FROM accounts").first("refresh_token_cipher")).toBe(initial);
+      expect((await apiGet("/api/catalog")).status).toBe(200);
+    }
+    expect(await runConsent({ noRefresh: true })).toBe(`${origin}/`);
+    expect(await db.prepare("SELECT youtube_write FROM accounts").first("youtube_write")).toBe(1);
+    invalidGrant = true;
+    expect((await apiGet(`${videoPath}/interactions`)).status).toBe(401);
+    expect(await db.prepare("SELECT youtube_write FROM accounts").first("youtube_write")).toBe(0);
+  });
+
+  it("読み取り権限でも再生対象の評価を毎回確認し、失敗時にD1の評価を維持する", async () => {
+    await accepted();
+    expect(await (await apiGet(`${videoPath}/interactions`)).json()).toMatchObject({ rating: "none", channel: { canWrite: false } });
+    rating = "like";
+    expect(await (await apiGet(`${videoPath}/interactions`)).json()).toMatchObject({ rating: "like", ratingFresh: true });
+    ratingFailure = true;
+    expect(await (await apiGet(`${videoPath}/interactions`)).json()).toMatchObject({ rating: "like", ratingFresh: false });
+    expect(await db.prepare("SELECT rating FROM video_ratings").first("rating")).toBe("like");
+    expect((await post(`${videoPath}/rating`, { channelId: channelA, rating: "none" })).status).toBe(403);
+  });
+
+  it("古い認可の失効応答で追加同意後の認可を消さない", async () => {
+    await accepted();
+    invalidGrant = true;
+    const incoming = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    holdRefresh = () => { incoming.resolve(); return release.promise; };
+    const oldRequest = apiGet(`${videoPath}/interactions`);
+    await incoming.promise;
+    invalidGrant = false;
+    try {
+      expect(await runConsent()).toBe(`${origin}/`);
+    } finally {
+      release.resolve();
+    }
+    expect((await oldRequest).status).toBe(401);
+    expect(await (await apiGet("/api/status")).json()).toMatchObject({ connected: true, youtube: { canWrite: true } });
+  });
+
+  it("古い評価取得が高評価操作の確定後に返っても保存結果を巻き戻さない", async () => {
+    await accepted(true);
+    const incoming = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    holdRating = () => { incoming.resolve(); return release.promise; };
+    const oldRequest = apiGet(`${videoPath}/interactions`);
+    await incoming.promise;
+    try {
+      expect((await post(`${videoPath}/rating`, { channelId: channelA, rating: "like" })).status).toBe(200);
+    } finally {
+      release.resolve();
+    }
+    expect(await (await oldRequest).json()).toMatchObject({ rating: "like" });
+    expect(await db.prepare("SELECT rating FROM video_ratings").first("rating")).toBe("like");
+  });
+
+  it("50件の上限サイズの概要欄を2 MiB以内で取得できる", async () => {
+    const ids = Array.from({ length: 50 }, (_, index) => `video${String(index).padStart(6, "0")}`);
+    const description = String.fromCharCode(1).repeat(5000);
+    const client = new YouTubeClient("mock", async () => new Response(JSON.stringify({
+      items: ids.map((id) => ({ id, snippet: { channelId: channelA, title: "タイトル", publishedAt: published(60), description } })),
+    })));
+    const videos = await client.videos(ids);
+    expect(videos).toHaveLength(50);
+    expect(videos[0].description).toBe(description);
+  });
+
+  it("本人チャンネルを確認し、低評価を解除せず、204の高評価と解除を保存する", async () => {
+    await accepted(true);
+    rating = "dislike";
+    const set = (wanted: string, channelId = channelA) => post(`${videoPath}/rating`, { channelId, rating: wanted });
+    expect(await (await set("none")).json()).toMatchObject({ rating: "dislike" });
+    expect(seen.some((path) => path.includes("/videos/rate"))).toBe(false);
+    expect(await (await set("like")).json()).toMatchObject({ rating: "like" });
+    expect(await (await set("none")).json()).toMatchObject({ rating: "none" });
+    actionChannel = channelB;
+    expect((await set("like")).status).toBe(409);
+    expect(await (await set("like", channelB)).json()).toMatchObject({ rating: "like" });
+    expect(await db.prepare("SELECT COUNT(*) n FROM video_ratings").first("n")).toBe(2);
+    actionChannel = "";
+    expect((await set("none", channelB)).status).toBe(409);
+  });
+
+  it("同時投稿と操作IDの再送を止め、トップレベルIDで編集・削除・再投稿し、解除で管理データを消す", async () => {
+    await accepted(true);
+    const text = "日本語😀".repeat(800);
+    const create = { action: "create", channelId: channelA, operation: operation(), body: text };
+    const endpoint = `${videoPath}/comment`;
+    const responses = await Promise.all([post(endpoint, create), post(endpoint, { ...create, operation: operation() })]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    expect(commentWrites).toBe(1);
+    expect(await db.prepare("SELECT comment_id FROM video_comments").first("comment_id")).toBe("top-comment");
+    const opened = await (await apiGet(`${endpoint}?channel=${channelA}`)).json<{ state: string; body: string; revision: string }>();
+    expect(opened).toMatchObject({ state: "posted", body: text });
+    actionChannel = channelB;
+    expect(await (await apiGet(`${videoPath}/interactions`)).json()).toMatchObject({ comment: "empty" });
+    expect((await apiGet(`${endpoint}?channel=${channelA}`)).status).toBe(409);
+    actionChannel = channelA;
+    const edit = { ...create, action: "edit", operation: operation(), revision: opened.revision, body: "更新済み" };
+    expect((await post(endpoint, edit)).status).toBe(200);
+    expect((await post(endpoint, { ...edit, action: "delete", operation: operation() })).status).toBe(409);
+    const updated = await (await apiGet(`${endpoint}?channel=${channelA}`)).json<{ body: string; revision: string }>();
+    expect(updated.body).toBe("更新済み");
+    expect((await post(endpoint, { ...edit, action: "delete", operation: operation(), revision: updated.revision })).status).toBe(200);
+    const empty = await (await apiGet(`${endpoint}?channel=${channelA}`)).json<{ state: string; revision: string }>();
+    expect(empty.state).toBe("empty");
+    expect((await post(endpoint, { ...edit, action: "create", revision: empty.revision })).status).toBe(409);
+    expect((await post(endpoint, { ...create, operation: operation(), revision: empty.revision })).status).toBe(200);
+    expect(seen.filter((path) => path.startsWith("/youtube/v3/commentThreads")).every((path) => path === "/youtube/v3/commentThreads?part=snippet")).toBe(true);
+    expect(seen.filter((path) => path.startsWith("/youtube/v3/comments?")).every((path) => !path.includes("videoId=") && !path.includes("parentId="))).toBe(true);
+    expect((await post("/api/disconnect")).status).toBe(200);
+    expect(comment?.id).toBe("top-comment");
+    for (const table of ["video_comments", "video_ratings", "comment_operations"])
+      expect(await db.prepare(`SELECT COUNT(*) n FROM ${table}`).first("n")).toBe(0);
+  });
+
+  it("コメント不可と結果不明を分け、期限経過で自動再送せず明示的な復旧だけを許可する", async () => {
+    await accepted(true);
+    const endpoint = `${videoPath}/comment`;
+    const create = { action: "create", channelId: channelA, body: "投稿" };
+    commentFailure = "disabled";
+    const disabled = await post(endpoint, { ...create, operation: operation() });
+    expect(await disabled.json()).toMatchObject({ code: "COMMENTS_DISABLED" });
+    const empty = await (await apiGet(`${endpoint}?channel=${channelA}`)).json<{ revision: string }>();
+    commentFailure = "unknown";
+    const result = await post(endpoint, { ...create, operation: operation(), revision: empty.revision });
+    expect(await result.json()).toMatchObject({ code: "COMMENT_UNKNOWN" });
+    await db.prepare("UPDATE video_comments SET updated_at = 0").run();
+    const details = await (await apiGet(`${endpoint}?channel=${channelA}`)).json<{ state: string; revision: string }>();
+    expect(details.state).toBe("unknown");
+    expect((await post(endpoint, { ...create, operation: operation(), revision: details.revision })).status).toBe(409);
+    expect(commentWrites).toBe(2);
+    expect((await post(endpoint, { action: "reset", channelId: channelA, operation: operation(),
+      revision: details.revision, confirmed: true })).status).toBe(200);
+  });
+
+  it("YouTubeでの投稿成功後にD1保存が失敗しても投稿を再送しない", async () => {
+    await accepted(true);
+    await db.prepare(`CREATE TRIGGER fail_comment_save BEFORE UPDATE ON video_comments
+      WHEN NEW.state = 'posted' BEGIN SELECT RAISE(ABORT, 'test persistence failure'); END`).run();
+    try {
+      const endpoint = `${videoPath}/comment`;
+      const create = { action: "create", channelId: channelA, body: "保存前に中断" };
+      expect(await (await post(endpoint, { ...create, operation: operation() })).json()).toMatchObject({ code: "COMMENT_UNKNOWN" });
+      expect(comment?.id).toBe("top-comment");
+      await db.prepare("UPDATE video_comments SET updated_at = 0").run();
+      const details = await (await apiGet(`${endpoint}?channel=${channelA}`)).json<{ state: string; revision: string }>();
+      expect(details.state).toBe("unknown");
+      expect((await post(endpoint, { ...create, operation: operation(), revision: details.revision })).status).toBe(409);
+      expect(commentWrites).toBe(1);
+    } finally {
+      await db.prepare("DROP TRIGGER fail_comment_save").run();
+    }
+  });
+
+  it("日次処理は保存したコメントIDを再確認して期限を延ばす", async () => {
+    await accepted(true);
+    expect((await post(`${videoPath}/comment`, { action: "create", channelId: channelA, body: "期限を更新", operation: operation() })).status).toBe(200);
+    const old = seconds() - 23 * 86400;
+    await db.prepare("UPDATE video_comments SET checked_at = ?").bind(old).run();
+    const env = await mf.getBindings<Env>();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await upstream(new Request(input, init));
+      return new Response(await response.text(), { status: response.status, headers: Object.fromEntries(response.headers) });
+    });
+    try {
+      await cleanup(env);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(seen.some((path) => path.startsWith("/youtube/v3/comments?part=snippet&id=top-comment"))).toBe(true);
+    expect(Number(await db.prepare("SELECT checked_at FROM video_comments").first("checked_at"))).toBeGreaterThan(old);
+    expect(commentWrites).toBe(1);
+  });
+
+  it("対象コメントの明確な消失だけで管理枠を解放し、期限切れはAPI由来のIDを消して確認を要求する", async () => {
+    await accepted(true);
+    const endpoint = `${videoPath}/comment`;
+    const create = { action: "create", channelId: channelA, body: "公開コメント" };
+    expect((await post(endpoint, { ...create, operation: operation() })).status).toBe(200);
+    const get = () => apiGet(`${endpoint}?channel=${channelA}`);
+    quotaFailure = true;
+    expect((await get()).status).toBe(429);
+    expect(await db.prepare("SELECT comment_id FROM video_comments").first("comment_id")).toBe("top-comment");
+    quotaFailure = false;
+    commentMissing = true;
+    const empty = await (await get()).json<{ state: string; revision: string }>();
+    expect(empty.state).toBe("empty");
+    commentMissing = false;
+    expect((await post(endpoint, { ...create, operation: operation(), revision: empty.revision })).status).toBe(200);
+    const old = seconds() - 30 * 86400;
+    await db.prepare("UPDATE video_comments SET checked_at = ?, updated_at = ?").bind(old, old).run();
+    await db.prepare("UPDATE accounts SET refresh_token_cipher = NULL, youtube_checked_at = ?").bind(old).run();
+    await cleanup(await mf.getBindings<Env>());
+    const stored = await db.prepare("SELECT state, comment_id, author_channel_id, video_id FROM video_comments").first();
+    expect(stored).toEqual({ state: "unknown", comment_id: null, author_channel_id: null, video_id: null });
+    expect(await db.prepare("SELECT youtube_channel_id FROM accounts").first("youtube_channel_id")).toBeNull();
+  });
+});
+
 async function runSync(full = false) {
   const started = await post("/api/sync/start", { full });
   expect(started.status, await started.clone().text()).toBe(200);
@@ -404,7 +730,8 @@ beforeAll(async () => {
     "\n" +
     (await readFile("migrations/0002_channel_ranges.sql", "utf8")) +
     "\n" +
-    (await readFile("migrations/0003_cloud_state.sql", "utf8"));
+    (await readFile("migrations/0003_cloud_state.sql", "utf8")) + "\n" +
+    (await readFile("migrations/0004_video_interactions.sql", "utf8"));
   // D1のexecは行単位で実行するため、CREATE文を一文ずつ渡す。
   for (const sql of schema
     .replace(/^--.*$/gm, "")
@@ -427,6 +754,19 @@ beforeEach(async () => {
   corruptSignature = false;
   uploadFailure = null;
   extraUploadPage = false;
+  codeScope = "";
+  codeRefresh = true;
+  refreshedScope = undefined;
+  invalidGrant = false;
+  holdRating = undefined;
+  holdRefresh = undefined;
+  actionChannel = channelA;
+  rating = "none";
+  ratingFailure = false;
+  commentFailure = null;
+  commentMissing = false;
+  commentWrites = 0;
+  comment = null;
 });
 afterAll(async () => {
   await mf?.dispose();

@@ -60,7 +60,7 @@ export async function loadHistory(c: WorkerContext): Promise<Response> {
       playlist,
       reset ? "" : channel.history_page_token,
     );
-    const videos = (await api.videos(page.items.map((item) => item.id))).filter(
+    const videos = (await api.videos(page.items.map((item) => item.id), session.interaction_policy > 0)).filter(
       (video) => video.channelId === channelId,
     );
     const writes = videos.map((video) =>

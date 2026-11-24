@@ -11,11 +11,11 @@ export function videoStatement(
 ): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO videos(sub, video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, embeddable, availability, last_fetched_at)
-    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${guard}
+      `INSERT INTO videos(sub, video_id, channel_id, title, thumbnail_url, published_at, duration_seconds, embeddable, availability, last_fetched_at, description)
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${guard}
     ON CONFLICT(sub, video_id) DO UPDATE SET channel_id = excluded.channel_id, title = excluded.title, thumbnail_url = excluded.thumbnail_url,
     published_at = excluded.published_at, duration_seconds = excluded.duration_seconds, embeddable = excluded.embeddable,
-    availability = excluded.availability, last_fetched_at = excluded.last_fetched_at`,
+    availability = excluded.availability, last_fetched_at = excluded.last_fetched_at, description = COALESCE(excluded.description, videos.description)`,
     )
     .bind(
       sub,
@@ -28,6 +28,7 @@ export function videoStatement(
       Number(video.embeddable),
       video.availability,
       fetchedAt,
+      video.description,
       ...guardValues,
     );
 }
