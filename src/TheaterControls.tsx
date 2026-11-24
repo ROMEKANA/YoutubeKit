@@ -3,13 +3,13 @@ import { createTheaterGestures } from "./theaterGestures";
 
 // 映像を隠さない透明な操作面で、利用者が解除するまで誤タップを防ぐ。
 export function TheaterControls({
-  playbackComplete,
+  playing,
   onTogglePlayback,
   onSeek,
   onExit,
   exitButton,
 }: {
-  playbackComplete: boolean;
+  playing: boolean;
   onTogglePlayback: () => "playing" | "paused" | null;
   onSeek: (seconds: number) => boolean;
   onExit: () => void;
@@ -105,10 +105,10 @@ export function TheaterControls({
     };
   }, [gestures]);
 
-  // 完了時だけ解放し、再開時は操作面を作り直さず再取得する。
+  // 一時停止や再生終了で解放し、再開時は操作面を維持したまま再取得する。
   useEffect(() => {
-    if (playbackComplete) {
-      setWakeMessage("再生が終了したため、自動ロック防止を解除しました。");
+    if (!playing) {
+      setWakeMessage("端末の設定に従って画面が自動ロックされます。");
       return;
     }
     setWakeMessage("画面の自動ロック防止を確認しています…");
@@ -141,7 +141,7 @@ export function TheaterControls({
       disposed = true;
       void lock?.release().catch(() => {});
     };
-  }, [playbackComplete]);
+  }, [playing]);
   return (
     <div
       ref={pad}

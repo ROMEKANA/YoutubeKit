@@ -20,7 +20,7 @@ interface Props {
   active: boolean;
   onClose: () => void;
   onPlaybackProgress?: (videoId: string, positionSeconds: number, recordedAt: number, restart?: boolean) => void;
-  onCompleteChange?: (complete: boolean) => void;
+  onPlayingChange?: (playing: boolean) => void;
   onVideoPlaying?: (video: Video) => void;
   onSaveQueue?: (videoIds: string[]) => void;
   onQueueEdit?: (videos: Video[]) => void;
@@ -57,7 +57,7 @@ export function Player({
   active,
   onClose,
   onPlaybackProgress,
-  onCompleteChange,
+  onPlayingChange,
   onVideoPlaying,
   onSaveQueue,
   onQueueEdit,
@@ -169,10 +169,10 @@ export function Player({
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [complete, setComplete] = useState(false);
-  // キュー完了と再開をシアターの自動ロック防止へ伝える。
+  // 一時停止や再開をシアターの自動ロック防止へ伝える。
   useEffect(() => {
-    onCompleteChange?.(complete);
-  }, [complete, onCompleteChange]);
+    onPlayingChange?.(active && playing);
+  }, [active, playing, onPlayingChange]);
   const [attempt, setAttempt] = useState(0);
   const tracker = useRef(new PlaylistTracker(videos.length));
   const queueReady = useRef(false);
@@ -458,6 +458,7 @@ export function Player({
       if (document.hidden && playerReady) {
         clearPlaybackWatch();
         requestedIndex.current = null;
+        setPlaying(false);
         if (instance) {
           if (saveIntervalSecondsRef.current > 0)
             persistCurrentPlayback(instance);
@@ -555,7 +556,7 @@ export function Player({
                   onVideoPlayingRef.current?.(video);
                   restoreCurrentVideoPosition(target, video, current);
                 }
-                setPlaying(true);
+                setPlaying(!document.hidden);
               }
               const actionIndex = state === 0 ? lastPlayingIndex.current : current;
               if (state === 0 && actionIndex >= 0 &&

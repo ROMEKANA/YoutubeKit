@@ -243,7 +243,7 @@ function CatalogApp({
   // 一覧の操作メニューを開いた時点で、単独再生用の1本を準備する。
   const singleQueue = useMemo(() => menuVideo && panel === null ? [menuVideo] : null, [menuVideo, panel]);
   const [theater, setTheater] = useState(false);
-  const [playbackComplete, setPlaybackComplete] = useState(false);
+  const [playing, setPlaying] = useState(false);
   const playerHandle = useRef<PlayerHandle>(null);
   const theaterButton = useRef<HTMLButtonElement>(null);
   const suppressTheaterClick = useRef(false);
@@ -882,7 +882,7 @@ function CatalogApp({
             resumePlaybackPosition={settings.resumePlaybackPosition}
             restartNearEndSeconds={settings.restartNearEndSeconds}
             onClose={endPlayback}
-            onCompleteChange={setPlaybackComplete}
+            onPlayingChange={setPlaying}
             onVideoPlaying={recordChannelWatch}
             onPlaybackProgress={(videoId, positionSeconds, recordedAt, restart) => {
               if (!session || (positionSeconds === 0 && !restart)) return;
@@ -1807,7 +1807,7 @@ function CatalogApp({
               再生中の画面右上、設定の右にあるシアターアイコンを押すと、確認なしでページ全体をこの明るさにします。プレーヤーを含む画面全体のタップをガードし、トリプルタップで再生・一時停止を切り替えます。シアターボタンの位置をタップ、または3秒長押しで解除します。
             </p>
             <p className="panel-note" hidden>
-              本体の輝度やSafariのアドレスバーは変更できません。省電力にはコントロールセンターで本体の明るさも下げてください。自動ロック防止は端末が許可する場合だけ有効です。画面ロック中やバックグラウンドでの再生には対応しません。
+              本体の輝度やSafariのアドレスバーは変更できません。省電力にはコントロールセンターで本体の明るさも下げてください。再生中は端末が許可する場合だけ自動ロックを防止し、一時停止すると端末の設定に従って自動ロックします。画面ロック中やバックグラウンドでの再生には対応しません。
             </p>
           </div>
           <div className="connection-card">
@@ -2050,7 +2050,7 @@ function CatalogApp({
       )}
       {theater && (
         <TheaterControls
-          playbackComplete={playbackComplete}
+          playing={playing}
           onTogglePlayback={() =>
             playerHandle.current?.togglePlayback() ?? null
           }
