@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   commentMaxLength,
   type CommentDetails,
@@ -6,7 +6,6 @@ import {
   type YouTubeIdentity,
 } from "../shared/interactions";
 import { Icon } from "./Icon";
-import { Modal } from "./Modal";
 import type { Video } from "./model";
 import { ApiError, request, type ServerStatus } from "./useCatalog";
 
@@ -144,6 +143,8 @@ export function VideoInteractions({
     message: string;
   }>();
   const [target, setTarget] = useState<CommentTarget | null>(null);
+  const commentPanelId = useId();
+  const commentButton = useRef<HTMLButtonElement>(null);
   const loadKey = `${sub}:${videoId}:${playbackLoad}:${refresh}:${retry}`;
   const current = result?.key === loadKey ? result.value : undefined;
   const cacheChannel = auth.youtube?.channel?.id ?? lastChannel;
@@ -155,6 +156,26 @@ export function VideoInteractions({
     current ?? (statusError?.key === loadKey ? undefined : cachedValue);
   const visibleError =
     statusError?.key === loadKey ? statusError.message : current?.ratingError;
+  const openTarget =
+    target &&
+    target.video.id === videoId &&
+    target.account === sub &&
+    (!current || target.channel.id === current.channel.id)
+      ? target
+      : null;
+
+  useEffect(() => {
+    if (target && !openTarget) setTarget(null);
+  }, [target, openTarget]);
+
+  function closeComment() {
+    setTarget(null);
+    requestAnimationFrame(() => {
+      commentButton.current?.focus({ preventScroll: true });
+      commentButton.current?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
   const commentLabel =
     shown?.comment === "posted"
       ? "コメント編集"
@@ -290,19 +311,25 @@ export function VideoInteractions({
                     : "高評価（未確認）"}
             </button>
             <button
-              className="secondary"
+              ref={commentButton}
+              className="secondary comment-toggle"
+              aria-expanded={!!openTarget}
+              aria-controls={commentPanelId}
               disabled={
-                !current ||
-                !sub ||
-                (current.comment === "empty" && !current.channel.canWrite)
+                !openTarget &&
+                (!current ||
+                  !sub ||
+                  (current.comment === "empty" && !current.channel.canWrite))
               }
               onClick={() => {
-                if (current && sub)
+                if (openTarget) closeComment();
+                else if (current && sub)
                   setTarget({ video, account: sub, channel: current.channel });
               }}
             >
               <Icon name="comment" />
               {commentLabel}
+              <Icon name="chevron-down" size={16} />
             </button>
           </div>
           {((current && !current.channel.canWrite) ||
@@ -329,37 +356,42 @@ export function VideoInteractions({
               {ratingNotice.message}
             </p>
           )}
+          <div id={commentPanelId} hidden={!openTarget}>
+            {openTarget && (
+              <CommentPanel
+                target={openTarget}
+                csrf={csrf}
+                drafts={drafts.current}
+                onClose={closeComment}
+                onChange={(state) => {
+                  const key = targetKey(
+                    openTarget.account,
+                    openTarget.channel.id,
+                    openTarget.video.id,
+                  );
+                  const value = cached.current.get(key);
+                  if (value)
+                    cached.current.set(key, { ...value, comment: state });
+                  setResult((previous) =>
+                    previous?.key === loadKey &&
+                    previous.value.channel.id === openTarget.channel.id
+                      ? {
+                          ...previous,
+                          value: { ...previous.value, comment: state },
+                        }
+                      : previous,
+                  );
+                }}
+              />
+            )}
+          </div>
         </div>
-      )}
-      {target && (
-        <CommentDialog
-          target={target}
-          csrf={csrf}
-          drafts={drafts.current}
-          onClose={() => setTarget(null)}
-          onChange={(state) => {
-            const key = targetKey(
-              target.account,
-              target.channel.id,
-              target.video.id,
-            );
-            const value = cached.current.get(key);
-            if (value) cached.current.set(key, { ...value, comment: state });
-            setResult((previous) =>
-              previous?.key === loadKey &&
-              previous.value.channel.id === target.channel.id &&
-              videoId === target.video.id
-                ? { ...previous, value: { ...previous.value, comment: state } }
-                : previous,
-            );
-          }}
-        />
       )}
     </>
   );
 }
 
-function CommentDialog({
+function CommentPanel({
   target,
   csrf,
   drafts,
@@ -381,6 +413,7 @@ function CommentDialog({
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
   const [error, setError] = useState("");
+  const [savedNotice, setSavedNotice] = useState("");
   const [retry, setRetry] = useState(0);
   const [confirmation, setConfirmation] = useState<"delete" | "reset">();
   const onChangeRef = useRef(onChange);
@@ -420,6 +453,7 @@ function CommentDialog({
     setPending(true);
     setConfirmation(undefined);
     setError("");
+    setSavedNotice("");
     try {
       const data = (await write(path, csrf, {
         action,
@@ -431,8 +465,19 @@ function CommentDialog({
       })) as CommentDetails;
       if (action !== "reset") drafts.delete(key);
       onChange(data.state);
-      if (action === "reset") setRetry((value) => value + 1);
-      else onClose();
+      // 投稿後も欄を開いたまま、保存済みIDからYouTubeの本文を読み直す。
+      setDetails(undefined);
+      setLoading(true);
+      setSavedNotice(
+        action === "create"
+          ? "YouTubeに投稿しました。"
+          : action === "edit"
+            ? "変更を保存しました。"
+            : action === "delete"
+              ? "コメントを削除しました。"
+              : "",
+      );
+      setRetry((value) => value + 1);
     } catch (reason) {
       setError(message(reason));
       setDetails(undefined);
@@ -446,134 +491,130 @@ function CommentDialog({
 
   const allowInput = details?.state === "posted" || details?.state === "empty";
   return (
-    <Modal
-      title={details?.state === "posted" ? "コメント編集" : "コメント"}
-      onClose={() => {
-        if (!pendingRef.current) onClose();
-      }}
+    <section
+      className="comment-editor"
+      aria-label="コメント"
+      aria-busy={loading || pending}
     >
-      <div className="comment-editor" aria-busy={loading || pending}>
-        <p className="comment-video">{video.title}</p>
-        <p className="panel-note">
-          投稿者 {channel.title} ／
-          投稿・編集したコメントはYouTubeに公開されます。
+      <p className="comment-video">{video.title}</p>
+      <p className="panel-note">
+        投稿者 {channel.title} ／
+        投稿・編集したコメントはYouTubeに公開されます。
+      </p>
+      {savedNotice && <p role="status">{savedNotice}</p>}
+      {loading && <p role="status">コメントを確認中…</p>}
+      {pending && <p role="status">YouTubeで処理中…</p>}
+      {error && (
+        <p role="alert" className="notice error">
+          {error}
         </p>
-        {loading && <p role="status">コメントを確認中…</p>}
-        {pending && <p role="status">YouTubeで処理中…</p>}
-        {error && (
-          <p role="alert" className="notice error">
-            {error}
-          </p>
-        )}
-        {((!details && !loading && !pending) || details?.state === "busy") && (
-          <button
-            className="text-button"
-            onClick={() => setRetry((value) => value + 1)}
-          >
-            コメントの状態を再確認
-          </button>
-        )}
-        {details?.state === "busy" && (
+      )}
+      {((!details && !loading && !pending) || details?.state === "busy") && (
+        <button
+          className="text-button"
+          onClick={() => setRetry((value) => value + 1)}
+        >
+          コメントの状態を再確認
+        </button>
+      )}
+      {details?.state === "busy" && (
+        <p className="panel-note">別の操作が進行中か、結果を確認しています。</p>
+      )}
+      {details?.state === "unknown" && !confirmation && (
+        <>
           <p className="panel-note">
-            別の操作が進行中か、結果を確認しています。
+            投稿結果または保存済みコメントを確認できません。YouTubeのコメント履歴で確認し、投稿が残っていれば必要に応じて削除してください。
           </p>
-        )}
-        {details?.state === "unknown" && !confirmation && (
-          <>
-            <p className="panel-note">
-              投稿結果または保存済みコメントを確認できません。YouTubeのコメント履歴で確認し、投稿が残っていれば必要に応じて削除してください。
-            </p>
-            <a
-              href="https://www.youtube.com/feed/history/comment_history"
-              target="_blank"
-              rel="noreferrer"
-            >
-              YouTubeのコメント履歴
-            </a>
-            <button
-              className="secondary"
+          <a
+            href="https://www.youtube.com/feed/history/comment_history"
+            target="_blank"
+            rel="noreferrer"
+          >
+            YouTubeのコメント履歴
+          </a>
+          <button
+            className="secondary"
+            disabled={pending || !channel.canWrite}
+            onClick={() => setConfirmation("reset")}
+          >
+            管理状態をリセット
+          </button>
+        </>
+      )}
+      {allowInput && !confirmation && !loading && (
+        <>
+          <label className="comment-input">
+            コメント本文
+            <textarea
+              rows={5}
+              maxLength={2 * commentMaxLength}
+              value={body}
               disabled={pending || !channel.canWrite}
-              onClick={() => setConfirmation("reset")}
+              onChange={(event) => {
+                setBody(event.target.value);
+                drafts.set(key, event.target.value);
+              }}
+            />
+          </label>
+          <p className="panel-note">
+            {count} / {commentMaxLength}文字
+          </p>
+          <div className="comment-actions">
+            <button
+              className="primary"
+              disabled={
+                !channel.canWrite ||
+                pending ||
+                !body.trim() ||
+                count > commentMaxLength
+              }
+              onClick={() =>
+                void submit(details.state === "posted" ? "edit" : "create")
+              }
             >
-              管理状態をリセット
+              {details.state === "posted" ? "変更を保存" : "YouTubeに投稿"}
             </button>
-          </>
-        )}
-        {allowInput && !confirmation && !loading && (
-          <>
-            <label className="comment-input">
-              コメント本文
-              <textarea
-                rows={5}
-                maxLength={2 * commentMaxLength}
-                value={body}
-                disabled={pending || !channel.canWrite}
-                onChange={(event) => {
-                  setBody(event.target.value);
-                  drafts.set(key, event.target.value);
-                }}
-              />
-            </label>
-            <p className="panel-note">
-              {count} / {commentMaxLength}文字
-            </p>
-            <div className="modal-footer">
-              <button
-                className="primary"
-                disabled={
-                  !channel.canWrite ||
-                  pending ||
-                  !body.trim() ||
-                  count > commentMaxLength
-                }
-                onClick={() =>
-                  void submit(details.state === "posted" ? "edit" : "create")
-                }
-              >
-                {details.state === "posted" ? "変更を保存" : "YouTubeに投稿"}
-              </button>
-              {details.state === "posted" && (
-                <button
-                  className="secondary"
-                  disabled={!channel.canWrite || pending}
-                  onClick={() => setConfirmation("delete")}
-                >
-                  コメントを削除
-                </button>
-              )}
-            </div>
-          </>
-        )}
-        {confirmation && (
-          <div className="notice" role="alert">
-            <p>
-              {confirmation === "delete"
-                ? "このコメントをYouTubeから削除しますか？"
-                : "YouTubeのコメント履歴で確認しましたか？リセットすると、この動画へ新しく投稿できるようになります。"}
-            </p>
-            <div className="modal-footer">
+            {details.state === "posted" && (
               <button
                 className="secondary"
-                onClick={() => void submit(confirmation)}
+                disabled={!channel.canWrite || pending}
+                onClick={() => setConfirmation("delete")}
               >
-                {confirmation === "delete"
-                  ? "削除する"
-                  : "確認済み・リセットする"}
+                コメントを削除
               </button>
-              <button
-                className="text-button"
-                onClick={() => setConfirmation(undefined)}
-              >
-                戻る
-              </button>
-            </div>
+            )}
           </div>
-        )}
-        {!channel.canWrite && <YouTubeConsent csrf={csrf} />}
-        <button className="text-button" disabled={pending} onClick={onClose}>
-          キャンセル
-        </button>
-      </div>
-    </Modal>
+        </>
+      )}
+      {confirmation && (
+        <div className="notice" role="alert">
+          <p>
+            {confirmation === "delete"
+              ? "このコメントをYouTubeから削除しますか？"
+              : "YouTubeのコメント履歴で確認しましたか？リセットすると、この動画へ新しく投稿できるようになります。"}
+          </p>
+          <div className="comment-actions">
+            <button
+              className="secondary"
+              onClick={() => void submit(confirmation)}
+            >
+              {confirmation === "delete"
+                ? "削除する"
+                : "確認済み・リセットする"}
+            </button>
+            <button
+              className="text-button"
+              onClick={() => setConfirmation(undefined)}
+            >
+              戻る
+            </button>
+          </div>
+        </div>
+      )}
+      {!channel.canWrite && <YouTubeConsent csrf={csrf} />}
+      <button className="text-button" disabled={pending} onClick={onClose}>
+        コメント欄を閉じる
+      </button>
+    </section>
   );
 }

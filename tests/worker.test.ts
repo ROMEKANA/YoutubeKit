@@ -34,6 +34,7 @@ let rating: "like" | "none" | "dislike" = "none";
 let ratingFailure = false;
 let commentFailure: "disabled" | "unknown" | null = null;
 let commentMissing = false;
+let sparseComment = false;
 let commentWrites = 0;
 let comment: { id: string; snippet: { videoId: string; authorChannelId: { value: string }; textOriginal: string } } | null = null;
 const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString(
@@ -213,7 +214,8 @@ async function upstream(request: Request) {
       videoId: data.snippet.videoId, authorChannelId: { value: actionChannel },
       textOriginal: data.snippet.topLevelComment.snippet.textOriginal,
     } };
-    return json({ id: "thread-id", snippet: { topLevelComment: comment } });
+    return json({ id: "thread-id", snippet: { videoId: data.snippet.videoId,
+      topLevelComment: sparseComment ? { id: comment.id } : comment } });
   }
   if (url.pathname === "/youtube/v3/comments") {
     if (request.method === "PUT") {
@@ -228,6 +230,8 @@ async function upstream(request: Request) {
       return new MockResponse(null, { status: 204 });
     }
     if (commentMissing) return json({ error: { errors: [{ reason: "commentNotFound" }] } }, 404);
+    if (comment && sparseComment) return json({ items: [{ id: comment.id,
+      snippet: { textOriginal: comment.snippet.textOriginal } }] });
     return json({ items: comment ? [comment] : [] });
   }
   if (url.pathname === "/youtube/v3/channels")
@@ -670,6 +674,32 @@ describe("概要欄・高評価・コメント（Workers + D1）", () => {
     expect(commentWrites).toBe(1);
   });
 
+  it("投稿直後に取得できなくてもIDを維持し、省略されたメタデータで最新本文を読み直す", async () => {
+    await accepted(true);
+    sparseComment = true;
+    const endpoint = `${videoPath}/comment`;
+    const create = { action: "create", channelId: channelA, body: "公開コメント" };
+    expect((await post(endpoint, { ...create, operation: operation() })).status).toBe(200);
+    const get = () => apiGet(`${endpoint}?channel=${channelA}`);
+    commentMissing = true;
+    expect(await (await get()).json()).toMatchObject({ code: "COMMENT_NOT_VISIBLE_YET" });
+    expect(await db.prepare("SELECT comment_id FROM video_comments").first("comment_id")).toBe("top-comment");
+    expect((await post(endpoint, { ...create, operation: operation() })).status).toBe(409);
+    commentMissing = false;
+    const posted = await (await get()).json<{ state: string; body: string; revision: string }>();
+    expect(posted).toMatchObject({ state: "posted", body: "公開コメント" });
+    expect(commentWrites).toBe(1);
+    expect((await post(endpoint, { ...create, action: "edit", revision: posted.revision, operation: operation(), body: "更新後" })).status).toBe(200);
+    expect(await (await get()).json()).toMatchObject({ state: "posted", body: "更新後" });
+    sparseComment = false;
+    comment!.snippet.videoId = videoIds[1];
+    expect(await (await get()).json()).toMatchObject({ code: "COMMENT_UNVERIFIED" });
+    comment!.snippet.videoId = videoIds[0];
+    comment!.snippet.authorChannelId.value = channelB;
+    expect(await (await get()).json()).toMatchObject({ code: "COMMENT_UNVERIFIED" });
+    expect(await db.prepare("SELECT comment_id FROM video_comments").first("comment_id")).toBe("top-comment");
+  });
+
   it("対象コメントの明確な消失だけで管理枠を解放し、期限切れはAPI由来のIDを消して確認を要求する", async () => {
     await accepted(true);
     const endpoint = `${videoPath}/comment`;
@@ -680,6 +710,7 @@ describe("概要欄・高評価・コメント（Workers + D1）", () => {
     expect((await get()).status).toBe(429);
     expect(await db.prepare("SELECT comment_id FROM video_comments").first("comment_id")).toBe("top-comment");
     quotaFailure = false;
+    await db.prepare("UPDATE video_comments SET updated_at = ?").bind(seconds() - 301).run();
     commentMissing = true;
     const empty = await (await get()).json<{ state: string; revision: string }>();
     expect(empty.state).toBe("empty");
@@ -765,6 +796,7 @@ beforeEach(async () => {
   ratingFailure = false;
   commentFailure = null;
   commentMissing = false;
+  sparseComment = false;
   commentWrites = 0;
   comment = null;
 });

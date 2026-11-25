@@ -14,7 +14,12 @@ import {
 } from "./auth";
 import { AppError, requireCondition } from "./errors";
 import { sha256 } from "./security";
-import { record, YouTubeClient, YouTubeRejected } from "./youtube";
+import {
+  record,
+  YouTubeClient,
+  YouTubeRejected,
+  type YouTubeComment,
+} from "./youtube";
 import { videoStatement } from "./videoStore";
 
 const day = 86400;
@@ -382,10 +387,36 @@ function finishComment(
 }
 
 const validCommentId = (id: string) => /^[\w-]{1,256}$/.test(id);
-const matchesComment = (
-  item: { videoId: string; authorId: string },
-  target: Target,
-) => item.videoId === target.videoId && item.authorId === target.channelId;
+
+// 動画は投稿時に確定したIDの紐付けで照合する。取得応答にも動画IDがあれば一致を確認する。
+function matchesComment(
+  item: YouTubeComment,
+  target: Pick<Target, "videoId" | "channelId">,
+) {
+  return (
+    !item.parentId &&
+    (!item.videoId || item.videoId === target.videoId) &&
+    // authorChannelId が省略された場合、原文は認証した投稿者にだけ返る。
+    (item.authorId
+      ? item.authorId === target.channelId
+      : item.original !== undefined)
+  );
+}
+
+function recentCommentMissing(error: unknown, row: CommentRow | null) {
+  if (
+    error instanceof AppError &&
+    error.code === "COMMENT_GONE" &&
+    row &&
+    row.updated_at > now() - commentRecoveryDelay
+  )
+    return new AppError(
+      "COMMENT_NOT_VISIBLE_YET",
+      "保存済みのコメントをYouTubeでまだ確認できません。少し待ってから再確認してください。",
+      409,
+    );
+  return null;
+}
 
 async function readOwnedComment(
   api: YouTubeClient,
@@ -455,11 +486,20 @@ export async function getComment(c: WorkerContext) {
         409,
       );
     }
-    details.body = comment.body;
+    const body = comment.original ?? comment.display;
+    requireCondition(
+      body !== undefined,
+      "COMMENT_UNVERIFIED",
+      "YouTubeからコメント本文を取得できません。再確認してください。",
+      502,
+    );
+    details.body = body;
     return c.json(details);
   } catch (error) {
     if (!(error instanceof AppError) || error.code !== "COMMENT_GONE")
       throw error;
+    const pendingVisibility = recentCommentMissing(error, row);
+    if (pendingVisibility) throw pendingVisibility;
     const revision = crypto.randomUUID();
     const result = await finishComment(
       db,
@@ -591,7 +631,10 @@ export async function changeComment(c: WorkerContext) {
         commentBody,
       );
       requireCondition(
-        validCommentId(inserted.id) && matchesComment(inserted, target),
+        validCommentId(inserted.id) &&
+          !inserted.parentId &&
+          (!inserted.videoId || inserted.videoId === target.videoId) &&
+          (!inserted.authorId || inserted.authorId === target.channelId),
         "COMMENT_UNKNOWN",
         "投稿したコメントを確認できませんでした。",
         502,
@@ -618,17 +661,20 @@ export async function changeComment(c: WorkerContext) {
       checked = id ? now() : null;
     }
   } catch (error) {
+    const pendingVisibility = !writeStarted
+      ? recentCommentMissing(error, previous)
+      : null;
     const gone = error instanceof AppError && error.code === "COMMENT_GONE";
     if (!writeStarted || error instanceof YouTubeRejected) {
       await finishComment(
         db,
         target,
         operation,
-        id && !gone ? "posted" : "empty",
-        gone ? null : id,
-        gone ? null : checked,
+        id && (!gone || pendingVisibility) ? "posted" : "empty",
+        gone && !pendingVisibility ? null : id,
+        gone && !pendingVisibility ? null : checked,
       );
-      throw error;
+      throw pendingVisibility ?? error;
     }
     // IDがある編集・削除は、後で同じIDを照会できるよう処理状態を保つ。
     if (action === "create")
@@ -711,8 +757,10 @@ export async function refreshStoredComments(env: Env) {
           returned.some(
             (item) =>
               item.id === row.comment_id &&
-              item.authorId === channel.id &&
-              item.videoId === row.video_id,
+              matchesComment(item, {
+                channelId: channel.id,
+                videoId: row.video_id,
+              }),
           ),
         );
         if (confirmed.length)

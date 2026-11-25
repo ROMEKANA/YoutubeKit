@@ -113,7 +113,9 @@ export interface YouTubeComment {
   id: string;
   videoId: string;
   authorId: string;
-  body: string;
+  parentId: string;
+  original: string | undefined;
+  display: string | undefined;
 }
 
 function parseComment(value: unknown): YouTubeComment {
@@ -123,7 +125,9 @@ function parseComment(value: unknown): YouTubeComment {
     id: text(raw.id),
     videoId: text(snippet.videoId),
     authorId: text(record(snippet.authorChannelId).value),
-    body: typeof snippet.textOriginal === "string" ? snippet.textOriginal : "",
+    parentId: text(snippet.parentId),
+    original: typeof snippet.textOriginal === "string" ? snippet.textOriginal : undefined,
+    display: typeof snippet.textDisplay === "string" ? snippet.textDisplay : undefined,
   };
 }
 
@@ -302,7 +306,6 @@ export class YouTubeClient {
   async comments(ids: string[]) {
     const page = await this.list("comments", {
       part: "snippet", id: ids.join(","), textFormat: "plainText",
-      fields: "items(id,snippet(videoId,authorChannelId/value,textOriginal))",
     });
     return page.items.map(parseComment).filter((comment) => ids.includes(comment.id));
   }
@@ -321,7 +324,11 @@ export class YouTubeClient {
     const result = await this.send("commentThreads", { part: "snippet" }, "POST", {
       snippet: { videoId, channelId, topLevelComment: { snippet: { textOriginal: body } } },
     });
-    return parseComment(record(result.snippet).topLevelComment);
+    const thread = record(result.snippet);
+    const comment = parseComment(thread.topLevelComment);
+    requireCondition(!thread.videoId || thread.videoId === videoId,
+      "COMMENT_UNKNOWN", "投稿先の動画を確認できません。", 502);
+    return { ...comment, videoId: comment.videoId || text(thread.videoId) };
   }
 
   async updateComment(id: string, body: string) {

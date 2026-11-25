@@ -1330,7 +1330,8 @@ small {
 .video-interaction-buttons .selected-rating svg {
   fill: currentColor;
 }
-.video-description {
+.video-description,
+.comment-editor {
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -1361,9 +1362,15 @@ small {
   color: #1855ac;
   text-decoration: underline;
 }
-.modal:has(.comment-editor) {
-  max-height: min(88dvh, 680px);
-  overscroll-behavior: contain;
+.comment-toggle[aria-expanded="true"] svg:last-child {
+  transform: rotate(180deg);
+}
+.comment-editor {
+  padding-block: 12px;
+  justify-items: start;
+}
+.comment-input {
+  width: 100%;
 }
 .comment-editor,
 .comment-input {
@@ -1387,12 +1394,14 @@ small {
   font: inherit;
   font-size: 16px;
 }
-.comment-editor .modal-footer {
+.comment-actions {
+  display: flex;
   flex-wrap: wrap;
+  gap: 8px;
 }
 @media (prefers-color-scheme: dark) {
   .video-description,
-  .modal:has(.comment-editor) {
+  .comment-editor {
     --line: #525b58;
     --paper: #222724;
     color: #f3f5f4;
